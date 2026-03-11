@@ -17,13 +17,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Logging helpers ───────────────────────────────────────────────────────────
 
-function log(level: "info" | "ok" | "warn" | "skip" | "err", msg: string): void {
+function log(
+  level: "info" | "ok" | "warn" | "skip" | "err",
+  msg: string,
+): void {
   const prefix: Record<typeof level, string> = {
     info: chalk.blue("  ℹ"),
-    ok: chalk.green("  ✔"),
+    ok: chalk.green("  ✔ "),
     warn: chalk.yellow("  ⚠"),
     skip: chalk.gray("  ─"),
-    err: chalk.red("  ✖"),
+    err: chalk.red("  ✖ "),
   };
   console.log(`${prefix[level]} ${msg}`);
 }
@@ -34,13 +37,15 @@ async function handleLearningSet(
   client: AxiosInstance,
   unit: Unit,
   skipCompleted: boolean,
-  delayMs: number
+  delayMs: number,
 ): Promise<void> {
-  const name =
-    unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
+  const name = unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
 
   if (skipCompleted && unit.completion_status === "COMPLETED") {
-    log("skip", `Learning Set: ${chalk.dim(name)} ${chalk.gray("(already done)")}`);
+    log(
+      "skip",
+      `Learning Set: ${chalk.dim(name)} ${chalk.gray("(already done)")}`,
+    );
     return;
   }
 
@@ -63,7 +68,7 @@ async function handlePracticeSet(
   client: AxiosInstance,
   unit: Unit,
   skipCompleted: boolean,
-  delayMs: number
+  delayMs: number,
 ): Promise<void> {
   const name = unit.practice_unit_details?.name ?? unit.unit_id;
 
@@ -73,7 +78,10 @@ async function handlePracticeSet(
   }
 
   if (unit.is_unit_locked) {
-    log("warn", `Practice: ${chalk.dim(name)} ${chalk.yellow("(locked — skipping)")}`);
+    log(
+      "warn",
+      `Practice: ${chalk.dim(name)} ${chalk.yellow("(locked — skipping)")}`,
+    );
     return;
   }
 
@@ -111,7 +119,9 @@ async function handlePracticeSet(
   await sleep(delayMs);
 
   // Step 3: Solve with Groq
-  const solveSpinner = ora(`  Solving ${questions.length} question(s) with AI…`).start();
+  const solveSpinner = ora(
+    `  Solving ${questions.length} question(s) with AI…`,
+  ).start();
   let answers: Map<string, string>;
   try {
     answers = await solveAll(questions, (done, total) => {
@@ -139,12 +149,20 @@ async function handlePracticeSet(
   let submitResult;
   try {
     const totalTime = responses.reduce((a, r) => a + r.time_spent, 0) + 30;
-    submitResult = await submitAnswers(client, examAttemptId, responses, totalTime);
-    const { correct_answer_count, total_questions_count } = submitResult.questions_stats;
+    submitResult = await submitAnswers(
+      client,
+      examAttemptId,
+      responses,
+      totalTime,
+    );
+    const { correct_answer_count, total_questions_count } =
+      submitResult.questions_stats;
     const score = submitResult.current_total_score;
-    const pct = ((correct_answer_count / total_questions_count) * 100).toFixed(0);
+    const pct = ((correct_answer_count / total_questions_count) * 100).toFixed(
+      0,
+    );
     submitSpinner.succeed(
-      `  Submitted — ${chalk.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`
+      `  Submitted — ${chalk.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`,
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -171,7 +189,7 @@ async function processTopic(
   client: AxiosInstance,
   topic: Topic,
   courseId: string,
-  config: RunConfig
+  config: RunConfig,
 ): Promise<void> {
   if (topic.is_topic_locked) {
     log("warn", `Topic "${topic.topic_name}" is locked — skipping`);
@@ -185,7 +203,7 @@ async function processTopic(
 
   console.log(
     chalk.bold.yellow(`\n  ● Topic ${topic.order}: ${topic.topic_name}`) +
-      chalk.gray(` [${(topic.completion_percentage ?? 0).toFixed(0)}% done]`)
+      chalk.gray(` [${(topic.completion_percentage ?? 0).toFixed(0)}% done]`),
   );
 
   let units;
@@ -212,9 +230,19 @@ async function processTopic(
       (config.mode === "practice" || config.mode === "both");
 
     if (doLearning) {
-      await handleLearningSet(client, unit, config.skipCompleted, config.delayMs);
+      await handleLearningSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs,
+      );
     } else if (doPractice) {
-      await handlePracticeSet(client, unit, config.skipCompleted, config.delayMs);
+      await handlePracticeSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs,
+      );
     } else if (
       unit.unit_type !== "QUIZ" &&
       unit.unit_type !== "ASSESSMENT" &&
@@ -233,7 +261,7 @@ async function processCourse(
   config: RunConfig,
   courseId: string,
   courseTitle: string,
-  topicLimit: number | "all"
+  topicLimit: number | "all",
 ): Promise<void> {
   console.log(chalk.bold.bgCyan.black(`\n  COURSE: ${courseTitle}  `));
 
@@ -242,7 +270,7 @@ async function processCourse(
   try {
     courseDetails = await getCourseDetails(client, courseId);
     courseSpinner.succeed(
-      `${courseDetails.topics.length} topics loaded  (${courseDetails.completion_percentage.toFixed(1)}% complete)`
+      `${courseDetails.topics.length} topics loaded  (${courseDetails.completion_percentage.toFixed(1)}% complete)`,
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -266,10 +294,17 @@ async function processCourse(
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-export async function run(client: AxiosInstance, config: RunConfig): Promise<void> {
-  console.log(chalk.bold.cyan("\n════════════════════════════════════════════"));
+export async function run(
+  client: AxiosInstance,
+  config: RunConfig,
+): Promise<void> {
+  console.log(
+    chalk.bold.cyan("\n════════════════════════════════════════════"),
+  );
   console.log(chalk.bold.cyan("  Starting automation…"));
-  console.log(chalk.bold.cyan("════════════════════════════════════════════\n"));
+  console.log(
+    chalk.bold.cyan("════════════════════════════════════════════\n"),
+  );
 
   for (const course of config.selectedCourses) {
     await processCourse(
@@ -277,11 +312,15 @@ export async function run(client: AxiosInstance, config: RunConfig): Promise<voi
       config,
       course.course_id,
       course.course_title,
-      course.topicLimit
+      course.topicLimit,
     );
   }
 
-  console.log(chalk.bold.green("\n════════════════════════════════════════════"));
+  console.log(
+    chalk.bold.green("\n════════════════════════════════════════════"),
+  );
   console.log(chalk.bold.green("  All done!"));
-  console.log(chalk.bold.green("════════════════════════════════════════════\n"));
+  console.log(
+    chalk.bold.green("════════════════════════════════════════════\n"),
+  );
 }
