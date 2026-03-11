@@ -1,8 +1,14 @@
 {
   "name": "niatbuttcracker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Automate CCBP / NXT learning platform completions with AI-powered Q&A solving",
-  "keywords": ["ccbp", "nxt", "learning", "automation", "cli"],
+  "keywords": [
+    "ccbp",
+    "nxt",
+    "learning",
+    "automation",
+    "cli"
+  ],
   "author": "Pragnyan",
   "license": "MIT",
   "type": "module",

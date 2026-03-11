@@ -299,11 +299,13 @@ function buildPrompt(question) {
   parts.push(`Question: ${questionText}`);
   if (question.code_analysis?.code_details) {
     const { code, language } = question.code_analysis.code_details;
-    parts.push(`
+    parts.push(
+      `
 Code (${language}):
 \`\`\`${language.toLowerCase()}
 ${code}
-\`\`\``);
+\`\`\``
+    );
   }
   parts.push("\nOptions:");
   for (const opt of question.options) {
@@ -327,10 +329,11 @@ function pickBestOptionId(responseText, options) {
   return options[0].option_id;
 }
 async function solveQuestion(question) {
-  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!groqClient)
+    throw new Error("Groq not initialised. Call initGroq() first.");
   const prompt = buildPrompt(question);
   const completion = await groqClient.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: "moonshotai/kimi-k2-instruct-0905",
     messages: [
       {
         role: "system",
