@@ -14,7 +14,7 @@ URL = "https://nkb-backend-ccbp-prod-apis.ccbp.in/api/nkb_learning_resource/lear
 HEADERS = {
     "accept": "application/json",
     "accept-language": "en-US,en;q=0.9",
-    "authorization": "Bearer ZbuCiWPKlwKnW8bZZPDgYOvhS3f01v",
+    "authorization": "Bearer LYWuq48JdmkbxbHGRRwt5e8dHllvFW",
     "content-type": "application/json",
     "origin": "https://learning.ccbp.in",
     "referer": "https://learning.ccbp.in/",

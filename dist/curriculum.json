@@ -1,0 +1,411 @@
+{
+    "curriculum_details": [
+        {
+            "year": "1",
+            "semester_details": [
+                {
+                    "semester_id": "1f7ba145-660d-4b64-aaf6-21e3660861e7",
+                    "semester_name": "Semester 1",
+                    "semester_subjects": [
+                        {
+                            "subject_id": "8e329446-9b19-4923-929b-34c240d31c7b",
+                            "subject_title": "Computer Aided Engineering Graphics",
+                            "subject_description": "CAEG uses software for creating and modifying engineering drawings efficiently.",
+                            "category": "TECH",
+                            "subject_code": "25CAEG101",
+                            "credits": "1.0",
+                            "duration": "7:00:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "a2e3e612-2f54-4b74-8a7c-1e3c6251fc1c",
+                                    "course_title": "Computer Aided Engineering Graphics",
+                                    "no_of_topics": 8,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "e247a54a-ba63-47bd-a931-fba9b9b94f45",
+                            "subject_title": "Web Application Development-1",
+                            "subject_description": "Learn to build responsive websites using HTML, CSS, and JavaScript. Kickstart your journey into full-stack web development.",
+                            "category": "TECH",
+                            "subject_code": "25WAD101",
+                            "credits": "5.0",
+                            "duration": "7:30:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "6d41f350-76d5-4337-9be0-3fe0b26b1b26",
+                                    "course_title": "Build Your Own Static Website",
+                                    "no_of_topics": 12,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "62e43c70-ee74-4afe-8d1c-26ca9c22947a",
+                                    "course_title": "Build Your Own Responsive Website",
+                                    "no_of_topics": 11,
+                                    "order": 2
+                                },
+                                {
+                                    "course_id": "1d571a66-be1e-49cd-a17f-5b3b22d6d751",
+                                    "course_title": "Modern Responsive Web Design",
+                                    "no_of_topics": 11,
+                                    "order": 3
+                                },
+                                {
+                                    "course_id": "c0d9b357-87a7-41e2-985f-affaef636499",
+                                    "course_title": "Build Your Own Dynamic Web Application",
+                                    "no_of_topics": 9,
+                                    "order": 4
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "7ea9be1c-cce8-47fc-925b-21cd20cd2cfd",
+                            "subject_title": "Mathematics for Computing",
+                            "subject_description": "Master essential math concepts like logic, algebra, and probability. Apply them to solve real-world computing problems.",
+                            "category": "MATH",
+                            "subject_code": "25MCS101",
+                            "credits": "3.0",
+                            "duration": "4:30:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "70850c6b-459c-4134-a16c-3e42d46eb794",
+                                    "course_title": "Math For Computer Science",
+                                    "no_of_topics": 7,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "2479a55c-01d0-48d1-b82f-b640838e79c2",
+                            "subject_title": "Computer Programming",
+                            "subject_description": "Learn to write, debug, and optimize code using popular programming languages. Build problem-solving and logical thinking skills.",
+                            "category": "TECH",
+                            "subject_code": "25CPS101",
+                            "credits": "5.0",
+                            "duration": "7:30:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "c6008f8d-cd91-4843-bb3f-b75d4beca046",
+                                    "course_title": "Programming Foundations",
+                                    "no_of_topics": 34,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "695ec633-b0a9-446e-8cc0-9b7eeb7477d1",
+                            "subject_title": "Quantitative Skills",
+                            "subject_description": "Sharpen your skills in math, stats, and data analysis. Tackle numerical problems with confidence in any technical domain.",
+                            "category": "Aptitude",
+                            "subject_code": "25LSE101",
+                            "credits": "3.0",
+                            "duration": "4:30:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "97671af2-f44f-4eed-978c-d65d5c0c55c9",
+                                    "course_title": "Quantitative Aptitude",
+                                    "no_of_topics": 17,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "d2eb2607-47fd-4e9c-bb0f-f7d23c7dced2",
+                            "subject_title": "Professional Skills for Engineers",
+                            "subject_description": "Learn the essential soft skills needed for a successful engineering career. Develop communication, teamwork, time management, and leadership abilities to excel in professional environments.",
+                            "category": "ENGLISH",
+                            "subject_code": "25LPS101",
+                            "credits": "2.0",
+                            "duration": "1 day, 6:00:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "f903dc8e-fe3f-4977-86ad-d72d7690d38d",
+                                    "course_title": "Communicative English Foundation",
+                                    "no_of_topics": 38,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "e620fcac-516c-43c2-a746-bbbf13227ae4",
+                            "subject_title": "Fundamentals Of Quantum Computing",
+                            "subject_description": "Understand the core concepts of electronics, including circuits, semiconductors, and digital logic, tailored for computer science applications.\r\nLearn how electronic components and systems form the hardware backbone of computing devices.",
+                            "category": "Fundamentals Of Quantum Computing for csc",
+                            "subject_code": "25FQC101",
+                            "credits": "2.0",
+                            "duration": "1 day, 6:00:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "746ffae9-adee-45d3-8716-bc0cf07bc264",
+                                    "course_title": "Fundamentals of Quantum Computing",
+                                    "no_of_topics": 16,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "d228554e-df76-42d0-978c-3e55f8e4bfcd",
+                            "subject_title": "Indian Knowledge System",
+                            "subject_description": "Understand the core concepts of electronics, including circuits, semiconductors, and digital logic, tailored for computer science applications.\r\nLearn how electronic components and systems form the hardware backbone of computing devices.",
+                            "category": "Indian Knowledge System csc",
+                            "subject_code": "25IKS101",
+                            "credits": "1.0",
+                            "duration": "1 day, 6:00:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "27ea918a-df83-4500-98d8-fe137323ef63",
+                                    "course_title": "INDIAN KNOWLEDGE SYSTEM",
+                                    "no_of_topics": 5,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "b3fd28f4-1d17-4504-be66-372b836c0194",
+                            "subject_title": "Foreign Language",
+                            "subject_description": "German is a widely spoken foreign language, essential for academic, professional, and cultural engagement in German-speaking countries like Germany, Austria, and Switzerland.",
+                            "category": "TECH",
+                            "subject_code": "25FLG101",
+                            "credits": "1.0",
+                            "duration": "7:00:00",
+                            "order": 1,
+                            "semester_courses": [
+                                {
+                                    "course_id": "fc6a31de-0cea-4528-9eed-113d04d1597f",
+                                    "course_title": "Foreign Language",
+                                    "no_of_topics": 1,
+                                    "order": 10
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "semester_id": "52d8b5fa-5364-4cdc-95c8-bc788f34a64e",
+                    "semester_name": "Semester 2",
+                    "semester_subjects": [
+                        {
+                            "subject_id": "c2adc78b-a397-45a5-904b-3f5716a2ed2e",
+                            "subject_title": "Web  Application Development -2",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25WAD201",
+                            "credits": "5.0",
+                            "duration": "7:00:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "7e0446da-981d-4faa-b02d-f4dc605dba66",
+                                    "course_title": "JS Essentials",
+                                    "no_of_topics": 7,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "40ab5ebd-3def-4faf-adca-3d39d921df1c",
+                                    "course_title": "Introduction to React JS",
+                                    "no_of_topics": 7,
+                                    "order": 2
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "bc4bf70b-ce6b-4f4f-aac2-9222a881d518",
+                            "subject_title": "Fundamentals of Quantum Computing",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25FQC201",
+                            "credits": "2.0",
+                            "duration": "7:00:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "746ffae9-adee-45d3-8716-bc0cf07bc264",
+                                    "course_title": "Fundamentals of Quantum Computing",
+                                    "no_of_topics": 16,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "ac606af4-cea0-4dd1-802a-39bb18737087",
+                            "subject_title": "Foreign Language-2",
+                            "subject_description": "NA",
+                            "category": "ENGLISH",
+                            "subject_code": "25FNL201",
+                            "credits": "0.0",
+                            "duration": "6:44:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "c50fb2bf-d957-4888-9a59-1e71a7ec09d7",
+                                    "course_title": "Foreign Language II: French",
+                                    "no_of_topics": 5,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "511784a0-0f6d-4411-83eb-ac3fc4cfddf1",
+                            "subject_title": "Universal Human Values",
+                            "subject_description": "NA",
+                            "category": "MATH",
+                            "subject_code": "2025UHV01",
+                            "credits": "2.0",
+                            "duration": "6:44:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "7090775e-6fa5-40c1-bdcd-3098d3078706",
+                                    "course_title": "Universal Human Values, Understanding Harmony & Ethics",
+                                    "no_of_topics": 5,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "1fcd22db-7d75-480b-bcaa-4122958af89a",
+                            "subject_title": "Communicative English Advanced",
+                            "subject_description": "NA",
+                            "category": "ENGLISH",
+                            "subject_code": "25ECL201",
+                            "credits": "2.0",
+                            "duration": "3 days, 18:00:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "b21fe64c-21dc-4d6b-bd20-eceb953dd154",
+                                    "course_title": "Communicative English Advanced",
+                                    "no_of_topics": 25,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "76993b17-92e1-44b3-b7d9-4c09ce888ce6",
+                                    "course_title": "English B1 Level Learner Program",
+                                    "no_of_topics": 17,
+                                    "order": 2
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "1cd7e589-6580-4819-8dc1-d03fed49b967",
+                            "subject_title": "Computer Aided Engineering Graphics",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25CAEG201",
+                            "credits": "2.0",
+                            "duration": "6:56:40",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "a2e3e612-2f54-4b74-8a7c-1e3c6251fc1c",
+                                    "course_title": "Computer Aided Engineering Graphics",
+                                    "no_of_topics": 8,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "8264032c-98e4-44a9-bca6-4611222d89ea",
+                            "subject_title": "DataBase Management System",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25DBM201",
+                            "credits": "4.0",
+                            "duration": "7:00:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "25c1a72c-216e-47e1-9bc6-b2f16c66e0ca",
+                                    "course_title": "Introduction to Databases",
+                                    "no_of_topics": 13,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "a3aa84c2-ac32-4ed5-81a9-f050566521e9",
+                                    "course_title": "DBMS Fundamentals",
+                                    "no_of_topics": 2,
+                                    "order": 2
+                                },
+                                {
+                                    "course_id": "dd6794ae-5206-4bb4-af26-efdacd3668fd",
+                                    "course_title": "MongoDB",
+                                    "no_of_topics": 1,
+                                    "order": 3
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "d71ece40-7ac3-4b07-ba16-7ecaa0ca2eae",
+                            "subject_title": "Numerical Ability",
+                            "subject_description": "NA",
+                            "category": "APTITUDE",
+                            "subject_code": "25LSE201",
+                            "credits": "3.0",
+                            "duration": "10:45:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "0bbea1fb-25bc-402d-b0d4-72112198d5da",
+                                    "course_title": "Numerical Ability",
+                                    "no_of_topics": 10,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "c78199c4-bbe1-4665-a0f9-4e30c1c67391",
+                            "subject_title": "Data Structures",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25DST201",
+                            "credits": "5.0",
+                            "duration": "6:44:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "e216af3e-bcd0-4dee-9c4f-67e7502ecba3",
+                                    "course_title": "NIAT - DSA",
+                                    "no_of_topics": 5,
+                                    "order": 1
+                                }
+                            ]
+                        },
+                        {
+                            "subject_id": "fde6b40c-1cc4-4f0d-a2c6-2af3595d716e",
+                            "subject_title": "Building LLM Applications",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25LLM201",
+                            "credits": "0.0",
+                            "duration": "3 days, 3:00:00",
+                            "order": 2,
+                            "semester_courses": [
+                                {
+                                    "course_id": "a8f81e0c-22c3-41e6-b98a-ce7552d8e2c7",
+                                    "course_title": "Building Rest APIs with Flask",
+                                    "no_of_topics": 2,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "8874b642-82db-4274-8d71-b9940316db8d",
+                                    "course_title": "Building LLM Applications",
+                                    "no_of_topics": 11,
+                                    "order": 2
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
