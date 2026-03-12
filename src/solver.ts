@@ -58,28 +58,45 @@ function pickBestOptionId(
   return options[0]!.option_id;
 }
 
+const MODELS = [
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct-0905",
+  "moonshotai/kimi-k2-instruct",
+  "llama-3.3-70b-versatile"
+];
+
 export async function solveQuestion(question: Question): Promise<string> {
   if (!groqClient)
     throw new Error("Groq not initialised. Call initGroq() first.");
 
   const prompt = buildPrompt(question);
+  let lastError: unknown;
 
-  const completion = await groqClient.chat.completions.create({
-    model: "moonshotai/kimi-k2-instruct-0905",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert at answering multiple-choice questions accurately. You always respond with only the option_id UUID, nothing else.",
-      },
-      { role: "user", content: prompt },
-    ],
-    max_tokens: 64,
-    temperature: 0,
-  });
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an expert at answering multiple-choice questions accurately. You always respond with only the option_id UUID, nothing else.",
+          },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 64,
+        temperature: 0,
+      });
 
-  const answer = completion.choices[0]?.message?.content?.trim() ?? "";
-  return pickBestOptionId(answer, question.options);
+      const answer = completion.choices[0]?.message?.content?.trim() ?? "";
+      return pickBestOptionId(answer, question.options);
+    } catch (err) {
+      console.warn(`[Groq fallback] Model ${model} failed. Trying next...`);
+      lastError = err;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("All Groq models failed.");
 }
 
 export async function solveAll(
