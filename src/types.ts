@@ -161,9 +161,130 @@ export interface SubmitResult {
   current_total_score: number;
 }
 
+// ── Question Set (Coding) API ─────────────────────────────────────────────────
+
+export type CodingLanguage = "CPP" | "JAVA" | "PYTHON" | "NODE_JS" | string;
+
+export interface CodingQuestionSummary {
+  question_id: string;
+  question_status: string;
+  short_text: string;
+  difficulty: string;
+  applicable_languages: CodingLanguage[];
+  max_question_score: number;
+}
+
+export interface CodingTestCase {
+  test_case_id: string;
+  input: string;
+  output: string;
+  has_multiple_outputs: boolean;
+  possible_outputs: string[];
+}
+
+export interface CodingCode {
+  code_id: string;
+  code_content: string; // itself a JSON-stringified string (has extra surrounding quotes)
+  language: CodingLanguage;
+}
+
+export interface CodingQuestionDetail {
+  question_id: string;
+  question_type: "CODING";
+  question: {
+    content: string;
+    content_type: string;
+    short_text: string;
+    difficulty: string;
+    acceptance_percentage?: number;
+  };
+  code: CodingCode;            // default template
+  latest_saved_code: CodingCode | null;
+  test_cases: CodingTestCase[];
+  all_test_case_ids: string[];
+}
+
+export interface CodingQuestionsResponse {
+  questions: CodingQuestionDetail[];
+}
+
+// submit (sync — works for all; also the path for NODE_JS)
+export interface CodingSubmitResponse {
+  submission_result: Array<{
+    question_id: string;
+    question_score: number;
+    user_response_score: number;
+    user_response_id: number;
+    evaluation_result: "CORRECT" | "INCORRECT" | string;
+    passed_test_cases_count: number;
+    total_test_cases_count: number;
+    failing_test_case_details: null | object;
+    error_explanation_details: null | object;
+  }>;
+}
+
+// submit v2 (async — CPP/Java/Python)
+export interface CodingSubmitV2Response {
+  evaluation_details: Array<{
+    question_id: string;
+    evaluation_id: string;
+  }>;
+}
+
+export interface CodingSubmissionStatusResponse {
+  submission_id: string;
+  submission_status: "CORRECT" | "INCORRECT" | "PENDING" | string;
+  total_test_cases_count: number;
+  number_of_test_cases_passed: number;
+  failing_test_case_details: null | object;
+  submission_code: string;
+  language: CodingLanguage;
+}
+
+// ── Question Set (SQL) API ────────────────────────────────────────────────────
+
+export interface SqlQuestion {
+  question_id: string;
+  question_status: string;
+  question_number: number;
+  question_type: "SQL_CODING";
+  question: {
+    content: string;
+    content_type: string;
+    short_text: string | null;
+    difficulty: string;
+  };
+  default_code: {
+    code_id: string;
+    code_content: string;
+    language: "SQL";
+  };
+  latest_saved_code: null | { code_content: string; language: string };
+}
+
+export interface SqlQuestionsResponse {
+  learning_resource_details: object;
+  db_url: string;
+  questions: SqlQuestion[];
+}
+
+export interface SqlSubmitResponse {
+  submission_results: Array<{
+    question_id: string;
+    user_response_id: number;
+    evaluation_result: "CORRECT" | "INCORRECT" | string;
+    coding_submission_response: {
+      reason_for_error: string | null;
+      passed_test_cases_count: number;
+      total_test_cases_count: number;
+      reason_for_failures: string[];
+    };
+  }>;
+}
+
 // ── CLI Config ────────────────────────────────────────────────────────────────
 
-export type CompletionMode = "learning_sets" | "practice" | "both";
+export type CompletionMode = "learning_sets" | "practice" | "question_sets" | "both";
 
 export interface RunConfig {
   token: string;

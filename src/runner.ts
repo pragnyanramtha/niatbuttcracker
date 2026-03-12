@@ -10,8 +10,13 @@ import {
   getExamQuestions,
   submitAnswers,
   endExamAttempt,
+  getSqlQuestions,
+  submitSqlAnswers,
+  getCodingQuestionsSummary,
+  getCodingQuestions,
+  submitCodingAnswers,
 } from "./api.js";
-import { solveAll } from "./solver.js";
+import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent } from "./solver.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -183,6 +188,228 @@ async function handlePracticeSet(
   await sleep(delayMs);
 }
 
+// ── Question Set flow ─────────────────────────────────────────────────────────
+
+async function handleQuestionSet(
+  client: AxiosInstance,
+  unit: Unit,
+  skipCompleted: boolean,
+  delayMs: number,
+): Promise<void> {
+  const name =
+    (unit as any).question_set_unit_details?.name ??
+    (unit as any).learning_resource_set_unit_details?.name ??
+    unit.unit_id;
+
+  if (skipCompleted && unit.completion_percentage >= 100) {
+    log("skip", `Question Set: ${chalk.dim(name)} ${chalk.gray("(already done)")}`);
+    return;
+  }
+
+  if (unit.is_unit_locked) {
+    log("warn", `Question Set: ${chalk.dim(name)} ${chalk.yellow("(locked — skipping)")}`);
+    return;
+  }
+
+  console.log(chalk.bold(`\n  ▸ Question Set: ${chalk.cyan(name)}`));
+
+  // ── Try SQL path first ───────────────────────────────────────────────
+  let isSql = false;
+  let sqlQuestions: Awaited<ReturnType<typeof getSqlQuestions>> | null = null;
+
+  const probeSpinner = ora("  Detecting question set type…").start();
+  try {
+    const res = await getSqlQuestions(client, unit.unit_id);
+    if (res.questions && res.questions.length > 0) {
+      isSql = true;
+      sqlQuestions = res;
+      probeSpinner.succeed(`  SQL Question Set — ${res.questions.length} question(s)`);
+    } else {
+      probeSpinner.succeed("  Coding Question Set (no SQL questions found)");
+    }
+  } catch {
+    probeSpinner.succeed("  Coding Question Set (SQL probe failed)");
+  }
+
+  await sleep(delayMs);
+
+  // ── SQL path ─────────────────────────────────────────────────────────
+  if (isSql && sqlQuestions) {
+    const unanswered = sqlQuestions.questions.filter(
+      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
+    );
+
+    if (unanswered.length === 0) {
+      log("skip", "  All SQL questions already correct");
+      return;
+    }
+
+    // Extract schema context from learning_resource_details content
+    const dbContext =
+      (sqlQuestions.learning_resource_details as any)?.content ?? "";
+
+    const solveSpinner = ora(`  Solving ${unanswered.length} SQL question(s) with AI…`).start();
+    let sqlAnswers: Map<string, string>;
+    try {
+      sqlAnswers = await solveSqlQuestions(unanswered, dbContext, (done, total) => {
+        solveSpinner.text = `  Solving SQL questions with AI… ${done}/${total}`;
+      });
+      solveSpinner.succeed(`  Solved ${sqlAnswers.size} SQL question(s)`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      solveSpinner.fail(`  SQL solving failed: ${msg}`);
+      return;
+    }
+
+    await sleep(delayMs);
+
+    const submitSpinner = ora("  Submitting SQL answers…").start();
+    try {
+      const responses = unanswered
+        .filter((q) => sqlAnswers.has(q.question_id))
+        .map((q, i) => ({
+          question_id: q.question_id,
+          time_spent: 10 + i * 5,
+          user_response_code: {
+            code_content: sqlAnswers.get(q.question_id)!,
+            language: "SQL" as const,
+          },
+        }));
+
+      const result = await submitSqlAnswers(client, responses);
+      const correct = result.submission_results.filter((r) => r.evaluation_result === "CORRECT").length;
+      const total = result.submission_results.length;
+      submitSpinner.succeed(
+        `  SQL submitted — ${chalk.green(`${correct}/${total}`)} correct`,
+      );
+
+      // Log any wrong answers for visibility
+      for (const r of result.submission_results) {
+        if (r.evaluation_result !== "CORRECT") {
+          const qText = unanswered.find((q) => q.question_id === r.question_id)?.question.short_text ?? r.question_id;
+          log("warn", `  ✗ ${qText} — ${r.coding_submission_response?.reason_for_error ?? "INCORRECT"}`);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      submitSpinner.fail(`  SQL submit failed: ${msg}`);
+    }
+
+    return;
+  }
+
+  // ── Coding path ──────────────────────────────────────────────────────
+  const summarySpinner = ora("  Fetching coding question list…").start();
+  let summary: Awaited<ReturnType<typeof getCodingQuestionsSummary>>;
+  try {
+    summary = await getCodingQuestionsSummary(client, unit.unit_id);
+    summarySpinner.succeed(`  ${summary.length} coding question(s) found`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summarySpinner.fail(`  Failed to fetch question list: ${msg}`);
+    return;
+  }
+
+  await sleep(delayMs);
+
+  // Filter already-correct questions
+  const unanswered = summary.filter((q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED");
+  if (unanswered.length === 0) {
+    log("skip", "  All coding questions already correct");
+    return;
+  }
+
+  // Fetch full question details (with templates + test cases)
+  const detailSpinner = ora(`  Loading ${unanswered.length} question detail(s)…`).start();
+  let questions: Awaited<ReturnType<typeof getCodingQuestions>>["questions"];
+  try {
+    const res = await getCodingQuestions(client, unanswered.map((q) => q.question_id));
+    questions = res.questions;
+    detailSpinner.succeed(`  Got ${questions.length} question detail(s)`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    detailSpinner.fail(`  Failed to load question details: ${msg}`);
+    return;
+  }
+
+  await sleep(delayMs);
+
+  // Solve each question individually (they may need different languages)
+  const codingResponses: Array<{
+    question_id: string;
+    time_spent: number;
+    coding_answer: { code_content: string; language: string };
+  }> = [];
+
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i]!;
+    const summaryEntry = unanswered.find((s) => s.question_id === q.question_id);
+    const lang = pickLanguage(summaryEntry?.applicable_languages ?? q.code ? [q.code.language] : ["PYTHON"]);
+
+    const solveSpinner = ora(
+      `  [${i + 1}/${questions.length}] Solving "${q.question.short_text ?? q.question_id}" (${lang})…`,
+    ).start();
+
+    let code: string;
+    try {
+      code = await solveCodingQuestion(q, lang);
+      solveSpinner.succeed(
+        `  [${i + 1}/${questions.length}] ${chalk.green(q.question.short_text ?? q.question_id)} (${lang})`,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      solveSpinner.warn(`  [${i + 1}/${questions.length}] ${q.question.short_text ?? q.question_id} — AI failed: ${msg}, using template`);
+      code = decodeCodeContentLocal(q.code.code_content);
+    }
+
+    codingResponses.push({
+      question_id: q.question_id,
+      time_spent: 30 + i * 10,
+      coding_answer: {
+        code_content: encodeCodeContent(code),
+        language: lang,
+      },
+    });
+
+    if (i < questions.length - 1) await sleep(delayMs);
+  }
+
+  // Submit all at once
+  const submitSpinner = ora(`  Submitting ${codingResponses.length} coding answer(s)…`).start();
+  try {
+    const result = await submitCodingAnswers(client, codingResponses);
+    const correct = result.submission_result.filter((r) => r.evaluation_result === "CORRECT").length;
+    const total = result.submission_result.length;
+    const totalScore = result.submission_result.reduce((a, r) => a + r.user_response_score, 0);
+    submitSpinner.succeed(
+      `  Coding submitted — ${chalk.green(`${correct}/${total}`)} correct  score: ${totalScore}`,
+    );
+
+    for (const r of result.submission_result) {
+      if (r.evaluation_result !== "CORRECT") {
+        const q = questions.find((q) => q.question_id === r.question_id);
+        log(
+          "warn",
+          `  ✗ ${q?.question.short_text ?? r.question_id} — ${r.passed_test_cases_count ?? 0}/${r.total_test_cases_count ?? "?"} tests passed`,
+        );
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    submitSpinner.fail(`  Coding submit failed: ${msg}`);
+  }
+}
+
+// tiny local helper to avoid importing from solver just for decode
+function decodeCodeContentLocal(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "string" ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
 // ── Topic runner ──────────────────────────────────────────────────────────────
 
 async function processTopic(
@@ -229,6 +456,10 @@ async function processTopic(
       unit.unit_type === "PRACTICE" &&
       (config.mode === "practice" || config.mode === "both");
 
+    const doQuestionSet =
+      unit.unit_type === "QUESTION_SET" &&
+      (config.mode === "question_sets" || config.mode === "both");
+
     if (doLearning) {
       await handleLearningSet(
         client,
@@ -238,6 +469,13 @@ async function processTopic(
       );
     } else if (doPractice) {
       await handlePracticeSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs,
+      );
+    } else if (doQuestionSet) {
+      await handleQuestionSet(
         client,
         unit,
         config.skipCompleted,

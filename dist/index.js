@@ -328,24 +328,39 @@ function pickBestOptionId(responseText, options) {
   }
   return options[0].option_id;
 }
+var MODELS = [
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct-0905",
+  "moonshotai/kimi-k2-instruct",
+  "llama-3.3-70b-versatile"
+];
 async function solveQuestion(question) {
   if (!groqClient)
     throw new Error("Groq not initialised. Call initGroq() first.");
   const prompt = buildPrompt(question);
-  const completion = await groqClient.chat.completions.create({
-    model: "moonshotai/kimi-k2-instruct-0905",
-    messages: [
-      {
-        role: "system",
-        content: "You are an expert at answering multiple-choice questions accurately. You always respond with only the option_id UUID, nothing else."
-      },
-      { role: "user", content: prompt }
-    ],
-    max_tokens: 64,
-    temperature: 0
-  });
-  const answer = completion.choices[0]?.message?.content?.trim() ?? "";
-  return pickBestOptionId(answer, question.options);
+  let lastError;
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert at answering multiple-choice questions accurately. You always respond with only the option_id UUID, nothing else."
+          },
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 64,
+        temperature: 0
+      });
+      const answer = completion.choices[0]?.message?.content?.trim() ?? "";
+      return pickBestOptionId(answer, question.options);
+    } catch (err) {
+      console.warn(`[Groq fallback] Model ${model} failed. Trying next...`);
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All Groq models failed.");
 }
 async function solveAll(questions, onProgress) {
   const answers = /* @__PURE__ */ new Map();
@@ -377,17 +392,20 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function log(level, msg) {
   const prefix = {
     info: chalk2.blue("  \u2139"),
-    ok: chalk2.green("  \u2714"),
+    ok: chalk2.green("  \u2714 "),
     warn: chalk2.yellow("  \u26A0"),
     skip: chalk2.gray("  \u2500"),
-    err: chalk2.red("  \u2716")
+    err: chalk2.red("  \u2716 ")
   };
   console.log(`${prefix[level]} ${msg}`);
 }
 async function handleLearningSet(client, unit, skipCompleted, delayMs) {
   const name = unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
   if (skipCompleted && unit.completion_status === "COMPLETED") {
-    log("skip", `Learning Set: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`);
+    log(
+      "skip",
+      `Learning Set: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`
+    );
     return;
   }
   const spinner = ora({ text: `Learning Set: ${name}`, color: "cyan" }).start();
@@ -407,7 +425,10 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
     return;
   }
   if (unit.is_unit_locked) {
-    log("warn", `Practice: ${chalk2.dim(name)} ${chalk2.yellow("(locked \u2014 skipping)")}`);
+    log(
+      "warn",
+      `Practice: ${chalk2.dim(name)} ${chalk2.yellow("(locked \u2014 skipping)")}`
+    );
     return;
   }
   console.log(chalk2.bold(`
@@ -438,7 +459,9 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
     return;
   }
   await sleep(delayMs);
-  const solveSpinner = ora(`  Solving ${questions.length} question(s) with AI\u2026`).start();
+  const solveSpinner = ora(
+    `  Solving ${questions.length} question(s) with AI\u2026`
+  ).start();
   let answers;
   try {
     answers = await solveAll(questions, (done, total) => {
@@ -463,10 +486,17 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
   let submitResult;
   try {
     const totalTime = responses.reduce((a, r) => a + r.time_spent, 0) + 30;
-    submitResult = await submitAnswers(client, examAttemptId, responses, totalTime);
+    submitResult = await submitAnswers(
+      client,
+      examAttemptId,
+      responses,
+      totalTime
+    );
     const { correct_answer_count, total_questions_count } = submitResult.questions_stats;
     const score = submitResult.current_total_score;
-    const pct = (correct_answer_count / total_questions_count * 100).toFixed(0);
+    const pct = (correct_answer_count / total_questions_count * 100).toFixed(
+      0
+    );
     submitSpinner.succeed(
       `  Submitted \u2014 ${chalk2.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`
     );
@@ -513,9 +543,19 @@ async function processTopic(client, topic, courseId, config) {
     const doLearning = unit.unit_type === "LEARNING_SET" && (config.mode === "learning_sets" || config.mode === "both");
     const doPractice = unit.unit_type === "PRACTICE" && (config.mode === "practice" || config.mode === "both");
     if (doLearning) {
-      await handleLearningSet(client, unit, config.skipCompleted, config.delayMs);
+      await handleLearningSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs
+      );
     } else if (doPractice) {
-      await handlePracticeSet(client, unit, config.skipCompleted, config.delayMs);
+      await handlePracticeSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs
+      );
     } else if (unit.unit_type !== "QUIZ" && unit.unit_type !== "ASSESSMENT" && unit.unit_type !== "QUESTION_SET" && unit.unit_type !== "PROJECT") {
     }
   }
@@ -543,9 +583,13 @@ async function processCourse(client, config, courseId, courseTitle, topicLimit) 
   }
 }
 async function run(client, config) {
-  console.log(chalk2.bold.cyan("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"));
+  console.log(
+    chalk2.bold.cyan("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
+  );
   console.log(chalk2.bold.cyan("  Starting automation\u2026"));
-  console.log(chalk2.bold.cyan("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n"));
+  console.log(
+    chalk2.bold.cyan("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
+  );
   for (const course of config.selectedCourses) {
     await processCourse(
       client,
@@ -555,9 +599,13 @@ async function run(client, config) {
       course.topicLimit
     );
   }
-  console.log(chalk2.bold.green("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"));
+  console.log(
+    chalk2.bold.green("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
+  );
   console.log(chalk2.bold.green("  All done!"));
-  console.log(chalk2.bold.green("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n"));
+  console.log(
+    chalk2.bold.green("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
+  );
 }
 
 // src/index.ts

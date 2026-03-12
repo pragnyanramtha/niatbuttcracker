@@ -130,7 +130,7 @@ async function selectMode(): Promise<CompletionMode> {
     message: "What should be completed?",
     choices: [
       {
-        name: `${chalk.green("Both")} — Learning Sets ${chalk.dim("+")} Practice Sets`,
+        name: `${chalk.green("Both")} — Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
         value: "both",
       },
       {
@@ -140,6 +140,10 @@ async function selectMode(): Promise<CompletionMode> {
       {
         name: `${chalk.magenta("Practice Sets only")} — Attempt and submit MCQ practice exams`,
         value: "practice",
+      },
+      {
+        name: `${chalk.yellow("Question Sets only")} — Solve SQL/Coding practice questions with AI`,
+        value: "question_sets",
       },
     ],
   });
@@ -177,9 +181,10 @@ function printSummary(config: Omit<RunConfig, "token" | "groqKey">): void {
   }
 
   const modeLabel: Record<CompletionMode, string> = {
-    both: "Learning Sets + Practice Sets",
+    both: "Learning Sets + Practice Sets + Question Sets",
     learning_sets: "Learning Sets only",
     practice: "Practice Sets only",
+    question_sets: "Question Sets only",
   };
 
   console.log(`\n  Mode:          ${chalk.green(modeLabel[config.mode])}`);

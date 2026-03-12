@@ -1,5 +1,5 @@
 import Groq from "groq-sdk";
-import type { Question, QuestionOption } from "./types.js";
+import type { Question, QuestionOption, SqlQuestion, CodingQuestionDetail, CodingLanguage } from "./types.js";
 
 let groqClient: Groq | null = null;
 
@@ -136,4 +136,219 @@ export async function solveAll(
   }
 
   return answers;
+}
+
+// ── SQL Solver ────────────────────────────────────────────────────────────────
+
+function buildSqlPrompt(questions: SqlQuestion[], dbContext: string): string {
+  const schema = dbContext
+    .replace(/<[^>]+>/g, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+
+  const parts: string[] = [
+    "You are an expert SQL developer. Given the database schema below, write SQL answers for each numbered question.",
+    "",
+    `Database context:\n${schema}`,
+    "",
+    "Questions:",
+  ];
+
+  for (const q of questions) {
+    const text = q.question.content.replace(/<[^>]+>/g, "").trim();
+    parts.push(`\n[${q.question_id}]\n${text}`);
+  }
+
+  parts.push(
+    "\nRespond with ONLY a JSON object mapping each question_id to its SQL answer string, like:",
+    '{"<id>": "SELECT ...", "<id2>": "DELETE ..."}',
+    "No markdown, no explanations, just the JSON object."
+  );
+
+  return parts.join("\n");
+}
+
+export async function solveSqlQuestions(
+  questions: SqlQuestion[],
+  dbContext: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, string>> {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+
+  const answers = new Map<string, string>();
+
+  // Solve in batches of 10 to stay within token limits
+  const BATCH = 10;
+  let done = 0;
+
+  for (let i = 0; i < questions.length; i += BATCH) {
+    const batch = questions.slice(i, i + BATCH);
+    const prompt = buildSqlPrompt(batch, dbContext);
+
+    let parsed: Record<string, string> = {};
+    let lastError: unknown;
+
+    for (const model of MODELS) {
+      try {
+        const completion = await groqClient.chat.completions.create({
+          model,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are an expert SQL developer. Respond only with the requested JSON object.",
+            },
+            { role: "user", content: prompt },
+          ],
+          max_tokens: 2048,
+          temperature: 0,
+        });
+
+        const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
+        // Strip markdown code fences if present
+        const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+        parsed = JSON.parse(cleaned);
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (Object.keys(parsed).length === 0 && lastError) {
+      // Fallback: solve each individually
+      for (const q of batch) {
+        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\nDatabase: ${dbContext}\n\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+        try {
+          const completion = await groqClient.chat.completions.create({
+            model: MODELS[MODELS.length - 1]!,
+            messages: [{ role: "user", content: fallbackPrompt }],
+            max_tokens: 256,
+            temperature: 0,
+          });
+          const sql = completion.choices[0]?.message?.content?.trim() ?? "SELECT 1;";
+          parsed[q.question_id] = sql.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+        } catch {
+          parsed[q.question_id] = "SELECT 1;";
+        }
+      }
+    }
+
+    for (const q of batch) {
+      answers.set(q.question_id, parsed[q.question_id] ?? "SELECT 1;");
+      done++;
+      onProgress?.(done, questions.length);
+    }
+
+    if (i + BATCH < questions.length) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+
+  return answers;
+}
+
+// ── Coding Solver ─────────────────────────────────────────────────────────────
+
+/** Pick the best language from the available ones (prefer Python, then CPP, then Node) */
+export function pickLanguage(applicable: CodingLanguage[]): CodingLanguage {
+  const preference: CodingLanguage[] = ["PYTHON", "NODE_JS", "CPP", "JAVA"];
+  for (const lang of preference) {
+    if (applicable.includes(lang)) return lang;
+  }
+  return applicable[0] ?? "PYTHON";
+}
+
+/** Extract the raw code string from the API's double-encoded code_content */
+export function decodeCodeContent(raw: string): string {
+  try {
+    // The API returns the code_content as a JSON-stringified string,
+    // so it has surrounding quotes: "\"actual code\""
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
+/** Re-encode code for submission: code_content must be JSON.stringify(code) */
+export function encodeCodeContent(code: string): string {
+  return JSON.stringify(code);
+}
+
+function buildCodingPrompt(q: CodingQuestionDetail, lang: CodingLanguage, template: string): string {
+  const questionText = q.question.content
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .trim();
+
+  const testCasesText = q.test_cases
+    .map((tc, i) => {
+      const inp = decodeCodeContent(tc.input);
+      const out = decodeCodeContent(tc.output);
+      return `Example ${i + 1}:\n  Input: ${inp}\n  Output: ${out}`;
+    })
+    .join("\n");
+
+  const langLabel: Record<string, string> = {
+    CPP: "C++",
+    JAVA: "Java",
+    PYTHON: "Python 3",
+    NODE_JS: "Node.js (JavaScript)",
+  };
+
+  return [
+    `You are an expert ${langLabel[lang] ?? lang} developer. Complete the following coding problem.`,
+    "",
+    `Problem:\n${questionText}`,
+    "",
+    testCasesText ? `Test Cases:\n${testCasesText}` : "",
+    "",
+    `Language: ${langLabel[lang] ?? lang}`,
+    "",
+    `Template code (fill in the blanks, keep the structure):\n\`\`\`\n${template}\n\`\`\``,
+    "",
+    "Respond with ONLY the complete runnable code. No explanation, no markdown fences.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export async function solveCodingQuestion(
+  q: CodingQuestionDetail,
+  lang: CodingLanguage,
+): Promise<string> {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+
+  const template = decodeCodeContent(q.code.code_content);
+  const prompt = buildCodingPrompt(q, lang, template);
+  let lastError: unknown;
+
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.`,
+          },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 1024,
+        temperature: 0,
+      });
+
+      const raw = completion.choices[0]?.message?.content?.trim() ?? template;
+      // Strip markdown code fences if model adds them
+      return raw
+        .replace(/^```[a-z]*\n?/i, "")
+        .replace(/\n?```$/i, "")
+        .trim();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("All models failed for coding question.");
 }

@@ -6,6 +6,13 @@ import type {
   QuestionsResponse,
   QuestionResponse,
   SubmitResult,
+  CodingQuestionSummary,
+  CodingQuestionsResponse,
+  CodingSubmitResponse,
+  CodingSubmitV2Response,
+  CodingSubmissionStatusResponse,
+  SqlQuestionsResponse,
+  SqlSubmitResponse,
 } from "./types.js";
 
 const API_BASE = "https://nkb-backend-ccbp-prod-apis.ccbp.in";
@@ -129,4 +136,88 @@ export async function endExamAttempt(
       end_reason_enum: "ENDED_BY_USER_BY_NAVIGATING_BACK",
     })
   );
+}
+
+// ── Question Set — Coding ─────────────────────────────────────────────────────
+
+export async function getCodingQuestionsSummary(
+  client: AxiosInstance,
+  questionSetId: string
+): Promise<CodingQuestionSummary[]> {
+  const { data } = await client.post<CodingQuestionSummary[]>(
+    "/api/nkb_coding_practice/user/coding/questions/summary/?offset=0&length=999",
+    buildPayload({ question_set_id: questionSetId })
+  );
+  return data;
+}
+
+export async function getCodingQuestions(
+  client: AxiosInstance,
+  questionIds: string[]
+): Promise<CodingQuestionsResponse> {
+  const { data } = await client.post<CodingQuestionsResponse>(
+    "/api/nkb_coding_practice/user/coding/questions/",
+    buildPayload({ question_ids: questionIds })
+  );
+  return data;
+}
+
+// Sync submit — returns result immediately (works for NODE_JS, sometimes CPP/Python)
+export async function submitCodingAnswers(
+  client: AxiosInstance,
+  responses: Array<{ question_id: string; time_spent: number; coding_answer: { code_content: string; language: string } }>
+): Promise<CodingSubmitResponse> {
+  const { data } = await client.post<CodingSubmitResponse>(
+    "/api/nkb_coding_practice/question/coding/submit/",
+    buildPayload({ responses })
+  );
+  return data;
+}
+
+// Async submit v2 — returns evaluation_id to poll later
+export async function submitCodingAnswersV2(
+  client: AxiosInstance,
+  responses: Array<{ question_id: string; time_spent: number; coding_answer: { code_content: string; language: string } }>
+): Promise<CodingSubmitV2Response> {
+  const { data } = await client.post<CodingSubmitV2Response>(
+    "/api/nkb_coding_practice/question/coding/submit/v2/",
+    buildPayload({ responses })
+  );
+  return data;
+}
+
+// Poll submission status by submission_id (same UUID as evaluation_id from v2)
+export async function getCodingSubmissionStatus(
+  client: AxiosInstance,
+  submissionId: string
+): Promise<CodingSubmissionStatusResponse> {
+  const { data } = await client.post<CodingSubmissionStatusResponse>(
+    "/api/nkb_coding_practice/question/coding/submission/",
+    buildPayload({ submission_id: submissionId })
+  );
+  return data;
+}
+
+// ── Question Set — SQL ────────────────────────────────────────────────────────
+
+export async function getSqlQuestions(
+  client: AxiosInstance,
+  questionSetId: string
+): Promise<SqlQuestionsResponse> {
+  const { data } = await client.post<SqlQuestionsResponse>(
+    "/api/nkb_coding_practice/questions/sql/v1/?offset=0&length=999",
+    buildPayload({ question_set_id: questionSetId })
+  );
+  return data;
+}
+
+export async function submitSqlAnswers(
+  client: AxiosInstance,
+  responses: Array<{ question_id: string; time_spent: number; user_response_code: { code_content: string; language: "SQL" } }>
+): Promise<SqlSubmitResponse> {
+  const { data } = await client.post<SqlSubmitResponse>(
+    "/api/nkb_coding_practice/questions/sql/submit/v1/",
+    buildPayload({ responses })
+  );
+  return data;
 }
