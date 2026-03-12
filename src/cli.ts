@@ -130,8 +130,8 @@ async function selectMode(): Promise<CompletionMode> {
     message: "What should be completed?",
     choices: [
       {
-        name: `${chalk.green("Both")} — Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
-        value: "both",
+        name: `${chalk.green("All")} — Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
+        value: "all",
       },
       {
         name: `${chalk.blue("Learning Sets only")} — Mark video/reading resources as done`,
@@ -181,7 +181,7 @@ function printSummary(config: Omit<RunConfig, "token" | "groqKey">): void {
   }
 
   const modeLabel: Record<CompletionMode, string> = {
-    both: "Learning Sets + Practice Sets + Question Sets",
+    all: "Learning Sets + Practice Sets + Question Sets",
     learning_sets: "Learning Sets only",
     practice: "Practice Sets only",
     question_sets: "Question Sets only",

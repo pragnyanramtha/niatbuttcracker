@@ -284,7 +284,7 @@ export interface SqlSubmitResponse {
 
 // ── CLI Config ────────────────────────────────────────────────────────────────
 
-export type CompletionMode = "learning_sets" | "practice" | "question_sets" | "both";
+export type CompletionMode = "learning_sets" | "practice" | "question_sets" | "all";
 
 export interface RunConfig {
   token: string;

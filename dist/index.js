@@ -123,8 +123,8 @@ async function selectMode() {
     message: "What should be completed?",
     choices: [
       {
-        name: `${chalk.green("Both")} \u2014 Learning Sets ${chalk.dim("+")} Practice Sets`,
-        value: "both"
+        name: `${chalk.green("All")} \u2014 Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
+        value: "all"
       },
       {
         name: `${chalk.blue("Learning Sets only")} \u2014 Mark video/reading resources as done`,
@@ -133,6 +133,10 @@ async function selectMode() {
       {
         name: `${chalk.magenta("Practice Sets only")} \u2014 Attempt and submit MCQ practice exams`,
         value: "practice"
+      },
+      {
+        name: `${chalk.yellow("Question Sets only")} \u2014 Solve SQL/Coding practice questions with AI`,
+        value: "question_sets"
       }
     ]
   });
@@ -161,9 +165,10 @@ function printSummary(config) {
     console.log(`  ${chalk.cyan("\u2022")} ${course.course_title} ${chalk.dim(`(${limit})`)}`);
   }
   const modeLabel = {
-    both: "Learning Sets + Practice Sets",
+    all: "Learning Sets + Practice Sets + Question Sets",
     learning_sets: "Learning Sets only",
-    practice: "Practice Sets only"
+    practice: "Practice Sets only",
+    question_sets: "Question Sets only"
   };
   console.log(`
   Mode:          ${chalk.green(modeLabel[config.mode])}`);
@@ -286,6 +291,55 @@ async function endExamAttempt(client, examAttemptId) {
     })
   );
 }
+async function getCodingQuestionsSummary(client, questionSetId) {
+  const { data } = await client.post(
+    "/api/nkb_coding_practice/user/coding/questions/summary/?offset=0&length=999",
+    buildPayload({ question_set_id: questionSetId })
+  );
+  return data;
+}
+async function getCodingQuestions(client, questionIds) {
+  const { data } = await client.post(
+    "/api/nkb_coding_practice/user/coding/questions/",
+    buildPayload({ question_ids: questionIds })
+  );
+  return data;
+}
+async function submitCodingAnswers(client, responses) {
+  const { data } = await client.post(
+    "/api/nkb_coding_practice/question/coding/submit/",
+    buildPayload({ responses })
+  );
+  return data;
+}
+async function getSqlQuestions(client, questionSetId) {
+  const { data } = await client.post(
+    "/api/nkb_coding_practice/questions/sql/v1/?offset=0&length=999",
+    buildPayload({ question_set_id: questionSetId })
+  );
+  return data;
+}
+async function submitSqlAnswers(client, responses) {
+  const { data } = await client.post(
+    "/api/nkb_coding_practice/questions/sql/submit/v1/",
+    buildPayload({ responses })
+  );
+  return data;
+}
+async function startCodingQuestion(client, questionId) {
+  await client.post(
+    "/api/nkb_coding_practice/user/question/config/v1/",
+    buildPayload({ question_id: questionId })
+  );
+}
+async function saveCodingAnswer(client, questionId, codeContent, language) {
+  await client.post(
+    "/api/nkb_coding_practice/question/coding/save/",
+    buildPayload({
+      responses: [{ question_id: questionId, coding_answer: { code_content: codeContent, language } }]
+    })
+  );
+}
 
 // src/solver.ts
 import Groq from "groq-sdk";
@@ -383,6 +437,173 @@ async function solveAll(questions, onProgress) {
     }
   }
   return answers;
+}
+function buildSqlPrompt(questions, dbContext) {
+  const schema = dbContext.replace(/<[^>]+>/g, "").replace(/\r\n/g, "\n").trim();
+  const parts = [
+    "You are an expert SQL developer. Given the database schema below, write SQL answers for each numbered question.",
+    "",
+    `Database context:
+${schema}`,
+    "",
+    "Questions:"
+  ];
+  for (const q of questions) {
+    const text = q.question.content.replace(/<[^>]+>/g, "").trim();
+    parts.push(`
+[${q.question_id}]
+${text}`);
+  }
+  parts.push(
+    "\nRespond with ONLY a JSON object mapping each question_id to its SQL answer string, like:",
+    '{"<id>": "SELECT ...", "<id2>": "DELETE ..."}',
+    "No markdown, no explanations, just the JSON object."
+  );
+  return parts.join("\n");
+}
+async function solveSqlQuestions(questions, dbContext, onProgress) {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  const answers = /* @__PURE__ */ new Map();
+  const BATCH = 10;
+  let done = 0;
+  for (let i = 0; i < questions.length; i += BATCH) {
+    const batch = questions.slice(i, i + BATCH);
+    const prompt = buildSqlPrompt(batch, dbContext);
+    let parsed = {};
+    let lastError;
+    for (const model of MODELS) {
+      try {
+        const completion = await groqClient.chat.completions.create({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert SQL developer. Respond only with the requested JSON object."
+            },
+            { role: "user", content: prompt }
+          ],
+          max_tokens: 2048,
+          temperature: 0
+        });
+        const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
+        const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+        parsed = JSON.parse(cleaned);
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (Object.keys(parsed).length === 0 && lastError) {
+      for (const q of batch) {
+        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.
+
+Database: ${dbContext}
+
+Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+        try {
+          const completion = await groqClient.chat.completions.create({
+            model: MODELS[MODELS.length - 1],
+            messages: [{ role: "user", content: fallbackPrompt }],
+            max_tokens: 256,
+            temperature: 0
+          });
+          const sql = completion.choices[0]?.message?.content?.trim() ?? "SELECT 1;";
+          parsed[q.question_id] = sql.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+        } catch {
+          parsed[q.question_id] = "SELECT 1;";
+        }
+      }
+    }
+    for (const q of batch) {
+      answers.set(q.question_id, parsed[q.question_id] ?? "SELECT 1;");
+      done++;
+      onProgress?.(done, questions.length);
+    }
+    if (i + BATCH < questions.length) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  return answers;
+}
+function pickLanguage(applicable) {
+  const preference = ["PYTHON", "NODE_JS", "CPP", "JAVA"];
+  for (const lang of preference) {
+    if (applicable.includes(lang)) return lang;
+  }
+  return applicable[0] ?? "PYTHON";
+}
+function decodeCodeContent(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+function encodeCodeContent(code) {
+  return JSON.stringify(code);
+}
+function buildCodingPrompt(q, lang, template) {
+  const questionText = q.question.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  const testCasesText = q.test_cases.map((tc, i) => {
+    const inp = decodeCodeContent(tc.input);
+    const out = decodeCodeContent(tc.output);
+    return `Example ${i + 1}:
+  Input: ${inp}
+  Output: ${out}`;
+  }).join("\n");
+  const langLabel = {
+    CPP: "C++",
+    JAVA: "Java",
+    PYTHON: "Python 3",
+    NODE_JS: "Node.js (JavaScript)"
+  };
+  return [
+    `You are an expert ${langLabel[lang] ?? lang} developer. Complete the following coding problem.`,
+    "",
+    `Problem:
+${questionText}`,
+    "",
+    testCasesText ? `Test Cases:
+${testCasesText}` : "",
+    "",
+    `Language: ${langLabel[lang] ?? lang}`,
+    "",
+    `Template code (fill in the blanks, keep the structure):
+\`\`\`
+${template}
+\`\`\``,
+    "",
+    "Respond with ONLY the complete runnable code. No explanation, no markdown fences."
+  ].filter(Boolean).join("\n");
+}
+async function solveCodingQuestion(q, lang) {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  const template = decodeCodeContent(q.code.code_content);
+  const prompt = buildCodingPrompt(q, lang, template);
+  let lastError;
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.`
+          },
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 1024,
+        temperature: 0
+      });
+      const raw = completion.choices[0]?.message?.content?.trim() ?? template;
+      return raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All models failed for coding question.");
 }
 
 // src/runner.ts
@@ -514,6 +735,181 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
   }
   await sleep(delayMs);
 }
+async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
+  const name = unit.question_set_unit_details?.name ?? unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
+  if (skipCompleted && unit.completion_percentage >= 100) {
+    log("skip", `Question Set: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`);
+    return;
+  }
+  if (unit.is_unit_locked) {
+    log("warn", `Question Set: ${chalk2.dim(name)} ${chalk2.yellow("(locked \u2014 skipping)")}`);
+    return;
+  }
+  console.log(chalk2.bold(`
+  \u25B8 Question Set: ${chalk2.cyan(name)}`));
+  let isSql = false;
+  let sqlQuestions = null;
+  const probeSpinner = ora("  Detecting question set type\u2026").start();
+  try {
+    const res = await getSqlQuestions(client, unit.unit_id);
+    if (res.questions && res.questions.length > 0) {
+      isSql = true;
+      sqlQuestions = res;
+      probeSpinner.succeed(`  SQL Question Set \u2014 ${res.questions.length} question(s)`);
+    } else {
+      probeSpinner.succeed("  Coding Question Set (no SQL questions found)");
+    }
+  } catch {
+    probeSpinner.succeed("  Coding Question Set (SQL probe failed)");
+  }
+  await sleep(delayMs);
+  if (isSql && sqlQuestions) {
+    const unanswered2 = sqlQuestions.questions.filter(
+      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
+    );
+    if (unanswered2.length === 0) {
+      log("skip", "  All SQL questions already correct");
+      return;
+    }
+    const dbContext = sqlQuestions.learning_resource_details?.content ?? "";
+    const solveSpinner = ora(`  Solving ${unanswered2.length} SQL question(s) with AI\u2026`).start();
+    let sqlAnswers;
+    try {
+      sqlAnswers = await solveSqlQuestions(unanswered2, dbContext, (done, total) => {
+        solveSpinner.text = `  Solving SQL questions with AI\u2026 ${done}/${total}`;
+      });
+      solveSpinner.succeed(`  Solved ${sqlAnswers.size} SQL question(s)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      solveSpinner.fail(`  SQL solving failed: ${msg}`);
+      return;
+    }
+    await sleep(delayMs);
+    const submitSpinner2 = ora("  Submitting SQL answers\u2026").start();
+    try {
+      const responses = unanswered2.filter((q) => sqlAnswers.has(q.question_id)).map((q, i) => ({
+        question_id: q.question_id,
+        time_spent: 10 + i * 5,
+        user_response_code: {
+          code_content: sqlAnswers.get(q.question_id),
+          language: "SQL"
+        }
+      }));
+      const result = await submitSqlAnswers(client, responses);
+      const correct = result.submission_results.filter((r) => r.evaluation_result === "CORRECT").length;
+      const total = result.submission_results.length;
+      submitSpinner2.succeed(
+        `  SQL submitted \u2014 ${chalk2.green(`${correct}/${total}`)} correct`
+      );
+      for (const r of result.submission_results) {
+        if (r.evaluation_result !== "CORRECT") {
+          const qText = unanswered2.find((q) => q.question_id === r.question_id)?.question.short_text ?? r.question_id;
+          log("warn", `  \u2717 ${qText} \u2014 ${r.coding_submission_response?.reason_for_error ?? "INCORRECT"}`);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      submitSpinner2.fail(`  SQL submit failed: ${msg}`);
+    }
+    return;
+  }
+  const summarySpinner = ora("  Fetching coding question list\u2026").start();
+  let summary;
+  try {
+    summary = await getCodingQuestionsSummary(client, unit.unit_id);
+    summarySpinner.succeed(`  ${summary.length} coding question(s) found`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summarySpinner.fail(`  Failed to fetch question list: ${msg}`);
+    return;
+  }
+  await sleep(delayMs);
+  const unanswered = summary.filter((q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED");
+  if (unanswered.length === 0) {
+    log("skip", "  All coding questions already correct");
+    return;
+  }
+  const detailSpinner = ora(`  Loading ${unanswered.length} question detail(s)\u2026`).start();
+  let questions;
+  try {
+    const res = await getCodingQuestions(client, unanswered.map((q) => q.question_id));
+    questions = res.questions;
+    detailSpinner.succeed(`  Got ${questions.length} question detail(s)`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    detailSpinner.fail(`  Failed to load question details: ${msg}`);
+    return;
+  }
+  await sleep(delayMs);
+  const codingResponses = [];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const summaryEntry = unanswered.find((s) => s.question_id === q.question_id);
+    const lang = pickLanguage(summaryEntry?.applicable_languages ?? q.code ? [q.code.language] : ["PYTHON"]);
+    const solveSpinner = ora(
+      `  [${i + 1}/${questions.length}] Solving "${q.question.short_text ?? q.question_id}" (${lang})\u2026`
+    ).start();
+    let code;
+    try {
+      code = await solveCodingQuestion(q, lang);
+      solveSpinner.succeed(
+        `  [${i + 1}/${questions.length}] ${chalk2.green(q.question.short_text ?? q.question_id)} (${lang})`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      solveSpinner.warn(`  [${i + 1}/${questions.length}] ${q.question.short_text ?? q.question_id} \u2014 AI failed: ${msg}, using template`);
+      code = decodeCodeContentLocal(q.code.code_content);
+    }
+    const encodedCode = encodeCodeContent(code);
+    if (summaryEntry?.question_status === "NOT_ATTEMPTED") {
+      try {
+        await startCodingQuestion(client, q.question_id);
+        await saveCodingAnswer(client, q.question_id, encodedCode, lang);
+      } catch {
+      }
+      await sleep(Math.max(delayMs / 2, 300));
+    }
+    codingResponses.push({
+      question_id: q.question_id,
+      time_spent: 30 + i * 10,
+      coding_answer: {
+        code_content: encodedCode,
+        language: lang
+      }
+    });
+    if (i < questions.length - 1) await sleep(delayMs);
+  }
+  const submitSpinner = ora(`  Submitting ${codingResponses.length} coding answer(s)\u2026`).start();
+  try {
+    const result = await submitCodingAnswers(client, codingResponses);
+    const correct = result.submission_result.filter((r) => r.evaluation_result === "CORRECT").length;
+    const total = result.submission_result.length;
+    const totalScore = result.submission_result.reduce((a, r) => a + r.user_response_score, 0);
+    submitSpinner.succeed(
+      `  Coding submitted \u2014 ${chalk2.green(`${correct}/${total}`)} correct  score: ${totalScore}`
+    );
+    for (const r of result.submission_result) {
+      if (r.evaluation_result !== "CORRECT") {
+        const q = questions.find((q2) => q2.question_id === r.question_id);
+        log(
+          "warn",
+          `  \u2717 ${q?.question.short_text ?? r.question_id} \u2014 ${r.passed_test_cases_count ?? 0}/${r.total_test_cases_count ?? "?"} tests passed`
+        );
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    submitSpinner.fail(`  Coding submit failed: ${msg}`);
+  }
+}
+function decodeCodeContentLocal(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "string" ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
 async function processTopic(client, topic, courseId, config) {
   if (topic.is_topic_locked) {
     log("warn", `Topic "${topic.topic_name}" is locked \u2014 skipping`);
@@ -540,8 +936,9 @@ async function processTopic(client, topic, courseId, config) {
   }
   await sleep(config.delayMs);
   for (const unit of units) {
-    const doLearning = unit.unit_type === "LEARNING_SET" && (config.mode === "learning_sets" || config.mode === "both");
-    const doPractice = unit.unit_type === "PRACTICE" && (config.mode === "practice" || config.mode === "both");
+    const doLearning = unit.unit_type === "LEARNING_SET" && (config.mode === "learning_sets" || config.mode === "all");
+    const doPractice = unit.unit_type === "PRACTICE" && (config.mode === "practice" || config.mode === "all");
+    const doQuestionSet = unit.unit_type === "QUESTION_SET" && (config.mode === "question_sets" || config.mode === "all");
     if (doLearning) {
       await handleLearningSet(
         client,
@@ -551,6 +948,13 @@ async function processTopic(client, topic, courseId, config) {
       );
     } else if (doPractice) {
       await handlePracticeSet(
+        client,
+        unit,
+        config.skipCompleted,
+        config.delayMs
+      );
+    } else if (doQuestionSet) {
+      await handleQuestionSet(
         client,
         unit,
         config.skipCompleted,

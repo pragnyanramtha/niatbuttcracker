@@ -221,3 +221,29 @@ export async function submitSqlAnswers(
   );
   return data;
 }
+
+// "start" a question (transitions NOT_ATTEMPTED → ATTEMPT_STARTED)
+export async function startCodingQuestion(
+  client: AxiosInstance,
+  questionId: string
+): Promise<void> {
+  await client.post(
+    "/api/nkb_coding_practice/user/question/config/v1/",
+    buildPayload({ question_id: questionId })
+  );
+}
+
+// Save progress — also starts the question if NOT_ATTEMPTED
+export async function saveCodingAnswer(
+  client: AxiosInstance,
+  questionId: string,
+  codeContent: string,
+  language: string
+): Promise<void> {
+  await client.post(
+    "/api/nkb_coding_practice/question/coding/save/",
+    buildPayload({
+      responses: [{ question_id: questionId, coding_answer: { code_content: codeContent, language } }],
+    })
+  );
+}

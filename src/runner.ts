@@ -15,6 +15,8 @@ import {
   getCodingQuestionsSummary,
   getCodingQuestions,
   submitCodingAnswers,
+  startCodingQuestion,
+  saveCodingAnswer,
 } from "./api.js";
 import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent } from "./solver.js";
 
@@ -362,11 +364,24 @@ async function handleQuestionSet(
       code = decodeCodeContentLocal(q.code.code_content);
     }
 
+    const encodedCode = encodeCodeContent(code);
+
+    // If question is NOT_ATTEMPTED, call start + save first to transition state
+    if (summaryEntry?.question_status === "NOT_ATTEMPTED") {
+      try {
+        await startCodingQuestion(client, q.question_id);
+        await saveCodingAnswer(client, q.question_id, encodedCode, lang);
+      } catch {
+        // non-fatal — backend may still accept the submit
+      }
+      await sleep(Math.max(delayMs / 2, 300));
+    }
+
     codingResponses.push({
       question_id: q.question_id,
       time_spent: 30 + i * 10,
       coding_answer: {
-        code_content: encodeCodeContent(code),
+        code_content: encodedCode,
         language: lang,
       },
     });
@@ -450,15 +465,15 @@ async function processTopic(
   for (const unit of units) {
     const doLearning =
       unit.unit_type === "LEARNING_SET" &&
-      (config.mode === "learning_sets" || config.mode === "both");
+      (config.mode === "learning_sets" || config.mode === "all");
 
     const doPractice =
       unit.unit_type === "PRACTICE" &&
-      (config.mode === "practice" || config.mode === "both");
+      (config.mode === "practice" || config.mode === "all");
 
     const doQuestionSet =
       unit.unit_type === "QUESTION_SET" &&
-      (config.mode === "question_sets" || config.mode === "both");
+      (config.mode === "question_sets" || config.mode === "all");
 
     if (doLearning) {
       await handleLearningSet(
