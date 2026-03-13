@@ -347,10 +347,55 @@ var groqClient = null;
 function initGroq(apiKey) {
   groqClient = new Groq({ apiKey });
 }
+var MODELS = [
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct-0905",
+  "moonshotai/kimi-k2-instruct",
+  "llama-3.3-70b-versatile"
+];
+var RATE_LIMIT_COOLDOWN_MS = 6e4;
+var modelRateLimitedAt = /* @__PURE__ */ new Map();
+function markRateLimited(model) {
+  modelRateLimitedAt.set(model, Date.now());
+  const readyAt = new Date(
+    Date.now() + RATE_LIMIT_COOLDOWN_MS
+  ).toLocaleTimeString();
+  console.warn(`[solver] "${model}" rate-limited \u2014 skipping until ${readyAt}`);
+}
+function isRateLimitError(err) {
+  if (err && typeof err === "object") {
+    const status = err.status;
+    if (status === 429) return true;
+    const msg = err.message ?? "";
+    if (/rate.?limit|429|too many requests/i.test(msg)) return true;
+  }
+  return false;
+}
+function getModelOrder() {
+  const now = Date.now();
+  const fresh = [];
+  const limited = [];
+  for (const model of MODELS) {
+    const at = modelRateLimitedAt.get(model);
+    if (at === void 0 || now - at >= RATE_LIMIT_COOLDOWN_MS) {
+      if (at !== void 0) modelRateLimitedAt.delete(model);
+      fresh.push(model);
+    } else {
+      limited.push({ model, readyAt: at + RATE_LIMIT_COOLDOWN_MS });
+    }
+  }
+  if (fresh.length > 0) return fresh;
+  console.warn(`[solver] All models are rate-limited. Cycling through anyway\u2026`);
+  limited.sort((a, b) => a.readyAt - b.readyAt);
+  return limited.map((l) => l.model);
+}
 function buildPrompt(question) {
+  const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+  const letterToId = /* @__PURE__ */ new Map();
   const parts = [];
-  const questionText = question.question.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "");
-  parts.push(`Question: ${questionText}`);
+  const questionText = question.question.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  parts.push(`Question:
+${questionText}`);
   if (question.code_analysis?.code_details) {
     const { code, language } = question.code_analysis.code_details;
     parts.push(
@@ -362,59 +407,90 @@ ${code}
     );
   }
   parts.push("\nOptions:");
-  for (const opt of question.options) {
-    const text = opt.content.replace(/<[^>]+>/g, "");
-    parts.push(`  [${opt.option_id}] ${text}`);
+  for (let i = 0; i < question.options.length; i++) {
+    const opt = question.options[i];
+    const letter = LETTERS[i] ?? String(i + 1);
+    const text = opt.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+    parts.push(`  ${letter}) ${text}`);
+    letterToId.set(letter, opt.option_id);
   }
   parts.push(
-    "\nRespond with ONLY the option_id of the correct answer. No explanation, no quotes, just the UUID."
+    "\nAnalyze the question carefully and think step by step.",
+    "Then end your response with exactly this line:",
+    "Answer: X",
+    "where X is the single letter of the correct option (A, B, C, D, \u2026)."
   );
-  return parts.join("\n");
+  return { prompt: parts.join("\n"), letterToId };
 }
-function pickBestOptionId(responseText, options) {
+function pickBestOptionId(responseText, options, letterToId) {
+  const cleaned = responseText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const answerLineMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
+  if (answerLineMatch) {
+    const letter = answerLineMatch[1].toUpperCase();
+    const id = letterToId.get(letter);
+    if (id) return id;
+  }
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
+    const line = lines[i];
+    const bareLetterMatch = line.match(/^([A-H])[).:\s]*$/i);
+    if (bareLetterMatch) {
+      const letter = bareLetterMatch[1].toUpperCase();
+      const id = letterToId.get(letter);
+      if (id) return id;
+    }
+    const inlineMatch = line.match(
+      /\b(?:answer(?:\s+is)?|option|choose|select)[:\s]+([A-H])\b/i
+    );
+    if (inlineMatch) {
+      const letter = inlineMatch[1].toUpperCase();
+      const id = letterToId.get(letter);
+      if (id) return id;
+    }
+  }
   const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-  const matches = responseText.match(uuidPattern) ?? [];
-  const optionIds = new Set(options.map((o) => o.option_id.toLowerCase()));
-  for (const match of matches) {
-    if (optionIds.has(match.toLowerCase())) {
-      return match.toLowerCase() === match ? options.find((o) => o.option_id.toLowerCase() === match).option_id : match;
+  const uuidMatches = responseText.match(uuidPattern) ?? [];
+  const optionIdSet = new Set(options.map((o) => o.option_id.toLowerCase()));
+  for (const match of uuidMatches) {
+    if (optionIdSet.has(match.toLowerCase())) {
+      return options.find(
+        (o) => o.option_id.toLowerCase() === match.toLowerCase()
+      ).option_id;
     }
   }
   return options[0].option_id;
 }
-var MODELS = [
-  "openai/gpt-oss-120b",
-  "moonshotai/kimi-k2-instruct-0905",
-  "moonshotai/kimi-k2-instruct",
-  "llama-3.3-70b-versatile"
-];
 async function solveQuestion(question) {
   if (!groqClient)
     throw new Error("Groq not initialised. Call initGroq() first.");
-  const prompt = buildPrompt(question);
+  const { prompt, letterToId } = buildPrompt(question);
   let lastError;
-  for (const model of MODELS) {
+  for (const model of getModelOrder()) {
     try {
       const completion = await groqClient.chat.completions.create({
         model,
         messages: [
           {
             role: "system",
-            content: "You are an expert at answering multiple-choice questions accurately. You always respond with only the option_id UUID, nothing else."
+            content: "You are an expert tutor and problem-solver with deep knowledge across computer science, mathematics, science, languages, and general academia. When given a multiple-choice question, reason through it carefully before answering. Always end your response with 'Answer: X' where X is the letter of the correct option."
           },
           { role: "user", content: prompt }
         ],
-        max_tokens: 64,
+        max_tokens: 1024,
         temperature: 0
       });
-      const answer = completion.choices[0]?.message?.content?.trim() ?? "";
-      return pickBestOptionId(answer, question.options);
+      const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+      return pickBestOptionId(raw, question.options, letterToId);
     } catch (err) {
-      console.warn(`[Groq fallback] Model ${model} failed. Trying next...`);
+      if (isRateLimitError(err)) {
+        markRateLimited(model);
+      } else {
+        console.warn(`[solver] Model "${model}" failed \u2014 trying next\u2026`);
+      }
       lastError = err;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("All Groq models failed.");
+  throw lastError instanceof Error ? lastError : new Error("All Groq models failed for MCQ.");
 }
 async function solveAll(questions, onProgress) {
   const answers = /* @__PURE__ */ new Map();
@@ -433,7 +509,7 @@ async function solveAll(questions, onProgress) {
     }
     onProgress?.(i + 1, questions.length);
     if (i < questions.length - 1) {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 300));
     }
   }
   return answers;
@@ -441,7 +517,7 @@ async function solveAll(questions, onProgress) {
 function buildSqlPrompt(questions, dbContext) {
   const schema = dbContext.replace(/<[^>]+>/g, "").replace(/\r\n/g, "\n").trim();
   const parts = [
-    "You are an expert SQL developer. Given the database schema below, write SQL answers for each numbered question.",
+    "You are an expert SQL developer. Given the database schema below, write correct SQL answers for each numbered question.",
     "",
     `Database context:
 ${schema}`,
@@ -462,7 +538,8 @@ ${text}`);
   return parts.join("\n");
 }
 async function solveSqlQuestions(questions, dbContext, onProgress) {
-  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!groqClient)
+    throw new Error("Groq not initialised. Call initGroq() first.");
   const answers = /* @__PURE__ */ new Map();
   const BATCH = 10;
   let done = 0;
@@ -471,14 +548,14 @@ async function solveSqlQuestions(questions, dbContext, onProgress) {
     const prompt = buildSqlPrompt(batch, dbContext);
     let parsed = {};
     let lastError;
-    for (const model of MODELS) {
+    for (const model of getModelOrder()) {
       try {
         const completion = await groqClient.chat.completions.create({
           model,
           messages: [
             {
               role: "system",
-              content: "You are an expert SQL developer. Respond only with the requested JSON object."
+              content: "You are an expert SQL developer. Respond only with the requested JSON object. No markdown, no commentary."
             },
             { role: "user", content: prompt }
           ],
@@ -486,10 +563,16 @@ async function solveSqlQuestions(questions, dbContext, onProgress) {
           temperature: 0
         });
         const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
-        const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+        const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+        const cleaned = noThink.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
         parsed = JSON.parse(cleaned);
         break;
       } catch (err) {
+        if (isRateLimitError(err)) {
+          markRateLimited(model);
+        } else {
+          console.warn(`[solver] SQL model "${model}" failed \u2014 trying next\u2026`);
+        }
         lastError = err;
       }
     }
@@ -497,18 +580,21 @@ async function solveSqlQuestions(questions, dbContext, onProgress) {
       for (const q of batch) {
         const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.
 
-Database: ${dbContext}
+Database schema:
+${dbContext}
 
-Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+Task:
+${q.question.content.replace(/<[^>]+>/g, "")}`;
         try {
+          const [lastModel] = getModelOrder().slice(-1);
           const completion = await groqClient.chat.completions.create({
-            model: MODELS[MODELS.length - 1],
+            model: lastModel ?? MODELS[MODELS.length - 1],
             messages: [{ role: "user", content: fallbackPrompt }],
-            max_tokens: 256,
+            max_tokens: 512,
             temperature: 0
           });
           const sql = completion.choices[0]?.message?.content?.trim() ?? "SELECT 1;";
-          parsed[q.question_id] = sql.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+          parsed[q.question_id] = sql.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
         } catch {
           parsed[q.question_id] = "SELECT 1;";
         }
@@ -520,7 +606,7 @@ Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
       onProgress?.(done, questions.length);
     }
     if (i + BATCH < questions.length) {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
     }
   }
   return answers;
@@ -550,7 +636,7 @@ function buildCodingPrompt(q, lang, template) {
     const inp = decodeCodeContent(tc.input);
     const out = decodeCodeContent(tc.output);
     return `Example ${i + 1}:
-  Input: ${inp}
+  Input:  ${inp}
   Output: ${out}`;
   }).join("\n");
   const langLabel = {
@@ -560,7 +646,7 @@ function buildCodingPrompt(q, lang, template) {
     NODE_JS: "Node.js (JavaScript)"
   };
   return [
-    `You are an expert ${langLabel[lang] ?? lang} developer. Complete the following coding problem.`,
+    `You are an expert ${langLabel[lang] ?? lang} developer. Solve the following coding problem.`,
     "",
     `Problem:
 ${questionText}`,
@@ -570,40 +656,50 @@ ${testCasesText}` : "",
     "",
     `Language: ${langLabel[lang] ?? lang}`,
     "",
-    `Template code (fill in the blanks, keep the structure):
+    `Starter template (complete or replace as needed):
 \`\`\`
 ${template}
 \`\`\``,
     "",
-    "Respond with ONLY the complete runnable code. No explanation, no markdown fences."
+    "Requirements:",
+    "- Write complete, runnable code that passes all test cases.",
+    "- Read input exactly as shown in the examples.",
+    "- Do NOT include any explanation, comments beyond what is needed, or markdown fences.",
+    "- Respond with ONLY the complete runnable code."
   ].filter(Boolean).join("\n");
 }
 async function solveCodingQuestion(q, lang) {
-  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!groqClient)
+    throw new Error("Groq not initialised. Call initGroq() first.");
   const template = decodeCodeContent(q.code.code_content);
   const prompt = buildCodingPrompt(q, lang, template);
   let lastError;
-  for (const model of MODELS) {
+  for (const model of getModelOrder()) {
     try {
       const completion = await groqClient.chat.completions.create({
         model,
         messages: [
           {
             role: "system",
-            content: `You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.`
+            content: "You are an expert competitive programmer. Write complete, correct, runnable code. Respond with ONLY the code \u2014 no markdown fences, no commentary."
           },
           { role: "user", content: prompt }
         ],
-        max_tokens: 1024,
+        max_tokens: 2048,
         temperature: 0
       });
       const raw = completion.choices[0]?.message?.content?.trim() ?? template;
-      return raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+      return raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
     } catch (err) {
+      if (isRateLimitError(err)) {
+        markRateLimited(model);
+      } else {
+        console.warn(`[solver] Coding model "${model}" failed \u2014 trying next\u2026`);
+      }
       lastError = err;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("All models failed for coding question.");
+  throw lastError instanceof Error ? lastError : new Error("All Groq models failed for coding question.");
 }
 
 // src/runner.ts
