@@ -27,7 +27,9 @@ async function loadCurriculum(): Promise<Curriculum> {
     }
   }
 
-  throw new Error("curriculum.json not found. Make sure it exists in the package root.");
+  throw new Error(
+    "curriculum.json not found. Make sure it exists in the package root.",
+  );
 }
 
 async function main(): Promise<void> {
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
     try {
       config = await runPrompts(curriculum);
     } catch (err: unknown) {
+      // User hit Ctrl-C during prompts
       if (
         (err as NodeJS.ErrnoException).code === "ERR_USE_AFTER_CLOSE" ||
         String(err).includes("force closed")
