@@ -1,4 +1,6 @@
 import Groq from "groq-sdk";
+import axios from "axios";
+import { debug, IS_DEBUG } from "./logger.js";
 import type { Question, QuestionOption, SqlQuestion, CodingQuestionDetail, CodingLanguage } from "./types.js";
 
 let groqClient: Groq | null = null;
@@ -140,23 +142,77 @@ export async function solveAll(
 
 // ── SQL Solver ────────────────────────────────────────────────────────────────
 
-function buildSqlPrompt(questions: SqlQuestion[], dbContext: string): string {
-  const schema = dbContext
+// ── DB Schema Fetcher ─────────────────────────────────────────────────────────
+
+/**
+ * Downloads the SQLite DB from db_url and returns a human-readable schema
+ * string like: "TABLE products (id INTEGER, name TEXT, price REAL, ...)"
+ * This gives the AI the REAL table/column names instead of guessing.
+ */
+export async function fetchDbSchema(dbUrl: string): Promise<string> {
+  if (!dbUrl) return "";
+  try {
+    const res = await axios.get<ArrayBuffer>(dbUrl, { responseType: "arraybuffer", timeout: 10000 });
+    const buf = Buffer.from(res.data);
+
+    // Lazy-load sql.js to avoid startup cost
+    const initSqlJs = (await import("sql.js")).default;
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(buf);
+
+    // Get all user tables
+    const tables: string[] = db
+      .exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+      .flatMap((r) => r.values.map((v) => String(v[0])));
+
+    if (tables.length === 0) return "";
+
+    const schemaParts: string[] = [];
+    for (const table of tables) {
+      const cols = db
+        .exec(`PRAGMA table_info(${table})`)
+        .flatMap((r) => r.values.map((v) => `${v[1]} ${v[2]}`));  // name + type
+      schemaParts.push(`TABLE ${table} (${cols.join(", ")})`);
+    }
+
+    db.close();
+    return schemaParts.join("\n");
+  } catch (err) {
+    debug("[fetchDbSchema] Failed to fetch/parse DB:", err instanceof Error ? err.message : err);
+    return "";
+  }
+}
+
+function buildSqlPrompt(questions: SqlQuestion[], dbContext: string, realSchema: string): string {
+  const description = dbContext
     .replace(/<[^>]+>/g, "")
     .replace(/\r\n/g, "\n")
     .trim();
 
   const parts: string[] = [
-    "You are an expert SQL developer. Given the database schema below, write SQL answers for each numbered question.",
+    "You are an expert SQL developer. Write correct SQL queries for each question.",
     "",
-    `Database context:\n${schema}`,
-    "",
-    "Questions:",
   ];
+
+  if (realSchema) {
+    parts.push("ACTUAL DATABASE SCHEMA (use EXACTLY these table/column names):");
+    parts.push(realSchema);
+  } else if (description) {
+    parts.push("Database context:");
+    parts.push(description);
+  } else {
+    parts.push("(No schema provided — infer table/column names from starter SQL and question text)");
+  }
+
+  parts.push("", "Questions:");
 
   for (const q of questions) {
     const text = q.question.content.replace(/<[^>]+>/g, "").trim();
+    const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim();
     parts.push(`\n[${q.question_id}]\n${text}`);
+    if (starter && starter !== "SELECT" && starter.length > 2) {
+      parts.push(`Starter SQL (shows column/table names):\n${starter}`);
+    }
   }
 
   parts.push(
@@ -171,11 +227,14 @@ function buildSqlPrompt(questions: SqlQuestion[], dbContext: string): string {
 export async function solveSqlQuestions(
   questions: SqlQuestion[],
   dbContext: string,
+  realSchema: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<string, string>> {
   if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
 
   const answers = new Map<string, string>();
+
+  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none — using description context)"}`);
 
   // Solve in batches of 10 to stay within token limits
   const BATCH = 10;
@@ -183,7 +242,9 @@ export async function solveSqlQuestions(
 
   for (let i = 0; i < questions.length; i += BATCH) {
     const batch = questions.slice(i, i + BATCH);
-    const prompt = buildSqlPrompt(batch, dbContext);
+    const prompt = buildSqlPrompt(batch, dbContext, realSchema);
+
+    debug(`[SQL Solver] Prompt for batch ${Math.floor(i / BATCH) + 1}:\n${prompt}`);
 
     let parsed: Record<string, string> = {};
     let lastError: unknown;
@@ -205,9 +266,11 @@ export async function solveSqlQuestions(
         });
 
         const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
+        debug(`[SQL Solver] Raw AI response (${model}):\n${raw}`);
         // Strip markdown code fences if present
         const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
         parsed = JSON.parse(cleaned);
+        debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
         break;
       } catch (err) {
         lastError = err;
@@ -217,7 +280,8 @@ export async function solveSqlQuestions(
     if (Object.keys(parsed).length === 0 && lastError) {
       // Fallback: solve each individually
       for (const q of batch) {
-        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\nDatabase: ${dbContext}\n\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+        const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
+        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\n${realSchema ? `Schema:\n${realSchema}` : `Database: ${dbContext}`}\n${starter ? `Starter SQL:\n${starter}\n` : ""}\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
         try {
           const completion = await groqClient.chat.completions.create({
             model: MODELS[MODELS.length - 1]!,
@@ -245,6 +309,61 @@ export async function solveSqlQuestions(
   }
 
   return answers;
+}
+
+/**
+ * Given a failed SQL and the exact error message from the server,
+ * ask the AI to fix it. Returns corrected SQL or original if all models fail.
+ */
+export async function refineSqlAnswer(
+  question: SqlQuestion,
+  failedSql: string,
+  errorMessage: string,
+  realSchema: string,
+  dbContext: string,
+): Promise<string> {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+
+  const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
+  const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
+
+  const prompt = [
+    "Your previous SQL query returned the WRONG result. Fix it.",
+    "",
+    schema ? `Database schema:\n${schema}` : "",
+    "",
+    `Question:\n${questionText}`,
+    "",
+    `Your WRONG SQL:\n${failedSql}`,
+    "",
+    `Error / mismatch from the database:\n${errorMessage}`,
+    "",
+    "Write the CORRECTED SQL. Respond with ONLY the SQL, no explanation, no markdown.",
+  ].filter(Boolean).join("\n");
+
+  debug(`[SQL Refine] Retry prompt:\n${prompt}`);
+
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL." },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 512,
+        temperature: 0,
+      });
+      const raw = completion.choices[0]?.message?.content?.trim() ?? failedSql;
+      const fixed = raw.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+      debug(`[SQL Refine] Fixed SQL (${model}):\n${fixed}`);
+      return fixed;
+    } catch {
+      // try next model
+    }
+  }
+
+  return failedSql; // all models failed, return original
 }
 
 // ── Coding Solver ─────────────────────────────────────────────────────────────
@@ -278,7 +397,7 @@ export function encodeCodeContent(code: string): string {
 
 function buildCodingPrompt(q: CodingQuestionDetail, lang: CodingLanguage, template: string): string {
   const questionText = q.question.content
-    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<br\s*\/?>\n?/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .trim();
 
@@ -297,6 +416,17 @@ function buildCodingPrompt(q: CodingQuestionDetail, lang: CodingLanguage, templa
     NODE_JS: "Node.js (JavaScript)",
   };
 
+  const outputRule = lang === "CPP"
+    ? [
+        "CRITICAL RULES FOR C++:",
+        "- You MUST fill in the function body inside the existing class.",
+        "- Do NOT add int main() or any code outside the class.",
+        "- Do NOT change the class name, function signature, or parameters.",
+        "- Return the complete file exactly as given: #include lines + class with filled function body.",
+        "- The judge calls your function directly — a main() will cause compile errors."
+      ].join("\n")
+    : "Respond with ONLY the complete runnable code. No explanation, no markdown fences.";
+
   return [
     `You are an expert ${langLabel[lang] ?? lang} developer. Complete the following coding problem.`,
     "",
@@ -306,9 +436,9 @@ function buildCodingPrompt(q: CodingQuestionDetail, lang: CodingLanguage, templa
     "",
     `Language: ${langLabel[lang] ?? lang}`,
     "",
-    `Template code (fill in the blanks, keep the structure):\n\`\`\`\n${template}\n\`\`\``,
+    `TEMPLATE TO COMPLETE (keep all existing structure, only fill the function body):\n\`\`\`${lang === "CPP" ? "cpp" : ""}\n${template}\n\`\`\``,
     "",
-    "Respond with ONLY the complete runnable code. No explanation, no markdown fences.",
+    outputRule,
   ]
     .filter(Boolean)
     .join("\n");
@@ -320,8 +450,22 @@ export async function solveCodingQuestion(
 ): Promise<string> {
   if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
 
-  const template = decodeCodeContent(q.code.code_content);
+  const defaultTemplate = decodeCodeContent(q.code.code_content);
+  const savedTemplate = q.latest_saved_code
+    ? decodeCodeContent(q.latest_saved_code.code_content)
+    : null;
+  // If the user has started on a solution (more than +20 chars over base template), use it
+  const template = (savedTemplate && savedTemplate.length > defaultTemplate.length + 20)
+    ? savedTemplate
+    : defaultTemplate;
+
   const prompt = buildCodingPrompt(q, lang, template);
+  debug(`[Coding] Prompt for "${q.question.short_text}":\n${prompt}`);
+
+  const systemMessage = lang === "CPP"
+    ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation."
+    : "You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.";
+
   let lastError: unknown;
 
   for (const model of MODELS) {
@@ -329,10 +473,7 @@ export async function solveCodingQuestion(
       const completion = await groqClient.chat.completions.create({
         model,
         messages: [
-          {
-            role: "system",
-            content: `You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.`,
-          },
+          { role: "system", content: systemMessage },
           { role: "user", content: prompt },
         ],
         max_tokens: 1024,
@@ -340,11 +481,14 @@ export async function solveCodingQuestion(
       });
 
       const raw = completion.choices[0]?.message?.content?.trim() ?? template;
-      // Strip markdown code fences if model adds them
-      return raw
+      // Strip markdown code fences if model adds them despite instructions
+      const cleaned = raw
         .replace(/^```[a-z]*\n?/i, "")
         .replace(/\n?```$/i, "")
         .trim();
+
+      debug(`[Coding] Response (${model}):\n${cleaned.slice(0, 300)}...`);
+      return cleaned;
     } catch (err) {
       lastError = err;
     }

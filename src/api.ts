@@ -222,14 +222,14 @@ export async function submitSqlAnswers(
   return data;
 }
 
-// "start" a question (transitions NOT_ATTEMPTED → ATTEMPT_STARTED)
+// "start" a question — MUST be called before submitting (returns USER_QUESTIONS_DOES_NOT_EXIST otherwise)
 export async function startCodingQuestion(
   client: AxiosInstance,
   questionId: string
 ): Promise<void> {
   await client.post(
-    "/api/nkb_coding_practice/user/question/config/v1/",
-    buildPayload({ question_id: questionId })
+    "/api/nkb_coding_practice/coding/question/start/",
+    buildPayload({ question_id: questionId, should_mark_attempted: true })
   );
 }
 

@@ -5,6 +5,7 @@ const CONFIG_PATH = join(process.env.APPDATA || process.env.HOME || ".", ".niat-
 
 export interface UserConfig {
   groqKey?: string;
+  token?: string;
 }
 
 export async function loadConfig(): Promise<UserConfig> {

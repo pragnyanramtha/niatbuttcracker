@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "dev": "tsx src/index.ts",
+    "dev": "DEBUG=1 tsx src/index.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -30,10 +30,12 @@
     "axios": "^1.7.0",
     "chalk": "^5.3.0",
     "groq-sdk": "^0.7.0",
-    "ora": "^8.0.0"
+    "ora": "^8.0.0",
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/sql.js": "^1.4.9",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0"

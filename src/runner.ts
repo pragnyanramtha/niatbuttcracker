@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { debugAxiosError, debug } from "./logger.js";
 import ora from "ora";
 import type { AxiosInstance } from "axios";
 import type { RunConfig, Topic, Unit } from "./types.js";
@@ -18,7 +19,7 @@ import {
   startCodingQuestion,
   saveCodingAnswer,
 } from "./api.js";
-import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent } from "./solver.js";
+import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent, fetchDbSchema, refineSqlAnswer } from "./solver.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,6 +65,7 @@ async function handleLearningSet(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     spinner.fail(chalk.red(`Learning Set: ${name} — ${msg}`));
+    debugAxiosError("completeLearningSet", err);
   }
 
   await sleep(delayMs);
@@ -174,6 +176,7 @@ async function handlePracticeSet(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     submitSpinner.fail(`  Submit failed: ${msg}`);
+    debugAxiosError("submitAnswers (practice)", err);
   }
 
   await sleep(delayMs);
@@ -227,10 +230,11 @@ async function handleQuestionSet(
       sqlQuestions = res;
       probeSpinner.succeed(`  SQL Question Set — ${res.questions.length} question(s)`);
     } else {
-      probeSpinner.succeed("  Coding Question Set (no SQL questions found)");
+      probeSpinner.succeed("  Coding Question Set");
     }
   } catch {
-    probeSpinner.succeed("  Coding Question Set (SQL probe failed)");
+    // SQL endpoint returns 4xx for non-SQL sets — that's expected, not an error
+    probeSpinner.succeed("  Coding Question Set");
   }
 
   await sleep(delayMs);
@@ -249,11 +253,21 @@ async function handleQuestionSet(
     // Extract schema context from learning_resource_details content
     const dbContext =
       (sqlQuestions.learning_resource_details as any)?.content ?? "";
+    const dbUrl = sqlQuestions.db_url ?? "";
+
+    // Fetch real DB schema from the SQLite file — gives AI the actual table/column names
+    const schemaSpinner = ora("  Fetching DB schema…").start();
+    const realSchema = await fetchDbSchema(dbUrl);
+    if (realSchema) {
+      schemaSpinner.succeed(`  DB schema loaded — ${realSchema.split("\n").length} table(s)`);
+    } else {
+      schemaSpinner.warn("  Could not fetch DB schema (will use description context)");
+    }
 
     const solveSpinner = ora(`  Solving ${unanswered.length} SQL question(s) with AI…`).start();
     let sqlAnswers: Map<string, string>;
     try {
-      sqlAnswers = await solveSqlQuestions(unanswered, dbContext, (done, total) => {
+      sqlAnswers = await solveSqlQuestions(unanswered, dbContext, realSchema, (done, total) => {
         solveSpinner.text = `  Solving SQL questions with AI… ${done}/${total}`;
       });
       solveSpinner.succeed(`  Solved ${sqlAnswers.size} SQL question(s)`);
@@ -265,37 +279,130 @@ async function handleQuestionSet(
 
     await sleep(delayMs);
 
-    const submitSpinner = ora("  Submitting SQL answers…").start();
-    try {
-      const responses = unanswered
-        .filter((q) => sqlAnswers.has(q.question_id))
-        .map((q, i) => ({
-          question_id: q.question_id,
-          time_spent: 10 + i * 5,
-          user_response_code: {
-            code_content: sqlAnswers.get(q.question_id)!,
-            language: "SQL" as const,
-          },
-        }));
+    // Submit each SQL question with up to 5 AI-fix retries + 3 network retries on 5xx
+    const MAX_AI_RETRIES = 5;
+    const MAX_NET_RETRIES = 3;
 
-      const result = await submitSqlAnswers(client, responses);
-      const correct = result.submission_results.filter((r) => r.evaluation_result === "CORRECT").length;
-      const total = result.submission_results.length;
-      submitSpinner.succeed(
-        `  SQL submitted — ${chalk.green(`${correct}/${total}`)} correct`,
-      );
-
-      // Log any wrong answers for visibility
-      for (const r of result.submission_results) {
-        if (r.evaluation_result !== "CORRECT") {
-          const qText = unanswered.find((q) => q.question_id === r.question_id)?.question.short_text ?? r.question_id;
-          log("warn", `  ✗ ${qText} — ${r.coding_submission_response?.reason_for_error ?? "INCORRECT"}`);
+    /** Retry wrapper: retries on 5xx / network errors with exponential backoff */
+    async function submitWithRetry(
+      payload: Parameters<typeof submitSqlAnswers>[1],
+    ): Promise<Awaited<ReturnType<typeof submitSqlAnswers>>> {
+      let lastErr: unknown;
+      for (let n = 0; n < MAX_NET_RETRIES; n++) {
+        try {
+          return await submitSqlAnswers(client, payload);
+        } catch (err: unknown) {
+          const status = (err as any)?.response?.status;
+          if (status && status < 500) throw err; // 4xx = our fault, don't retry
+          lastErr = err;
+          const wait = 1000 * 2 ** n; // 1s, 2s, 4s
+          debug(`[SQL Submit] Network/5xx error (attempt ${n + 1}), retrying in ${wait}ms…`);
+          await sleep(wait);
         }
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      submitSpinner.fail(`  SQL submit failed: ${msg}`);
+      throw lastErr;
     }
+
+    for (let i = 0; i < unanswered.length; i++) {
+      const q = unanswered[i]!;
+      let currentSql = sqlAnswers.get(q.question_id);
+      if (!currentSql) continue;
+
+      const label = q.question.short_text?.trim() || `Q${q.question_number}` || q.question_id.slice(0, 8);
+
+      for (let attempt = 0; attempt <= MAX_AI_RETRIES; attempt++) {
+        const isRetry = attempt > 0;
+        const tag = isRetry ? ` (retry ${attempt}/${MAX_AI_RETRIES})` : "";
+        const submitSpinner = ora(`  [${i + 1}/${unanswered.length}] Submitting${tag}: ${label}…`).start();
+
+        debug(`[SQL Q${q.question_number}] Attempt ${attempt + 1} SQL:\n${currentSql}`);
+
+        let evalResult: string | undefined;
+        let errorDetail: string | undefined;
+
+        try {
+          const result = await submitWithRetry([{
+            question_id: q.question_id,
+            time_spent: 10 + i * 5 + attempt * 3,
+            user_response_code: { code_content: currentSql, language: "SQL" as const },
+          }]);
+
+          const r = result.submission_results[0];
+          evalResult = r?.evaluation_result;
+
+          if (evalResult === "CORRECT") {
+            const tag2 = isRetry ? chalk.dim(` (fixed on retry ${attempt})`) : "";
+            submitSpinner.succeed(`  [${i + 1}/${unanswered.length}] ${chalk.green("CORRECT")} — ${label}${tag2}`);
+            break;
+          }
+
+          const sub = r?.coding_submission_response;
+          errorDetail = sub?.reason_for_error
+            ?? (sub?.reason_for_failures?.length ? sub.reason_for_failures.join("\n") : null)
+            ?? `${sub?.passed_test_cases_count ?? 0}/${sub?.total_test_cases_count ?? "?"} tests passed`;
+
+          if (attempt < MAX_AI_RETRIES) {
+            submitSpinner.warn(`  [${i + 1}/${unanswered.length}] ${chalk.yellow("INCORRECT")} — ${label} — asking AI to fix…`);
+            debug(`[SQL Q${q.question_number}] Error:\n${errorDetail}`);
+            currentSql = await refineSqlAnswer(q, currentSql, errorDetail, realSchema, dbContext);
+            await sleep(Math.max(delayMs, 400));
+          } else {
+            submitSpinner.warn(`  [${i + 1}/${unanswered.length}] ${chalk.yellow(evalResult ?? "UNKNOWN")} — ${label} (gave up after ${MAX_AI_RETRIES} retries)`);
+            log("warn", `      Reason: ${chalk.red(errorDetail)}`);
+            debug(`[SQL Q${q.question_number}] Full response:`, JSON.stringify(r, null, 2));
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          submitSpinner.fail(`  [${i + 1}/${unanswered.length}] Submit failed: ${msg}`);
+          debugAxiosError("submitSqlAnswers", err);
+          break;
+        }
+      }
+
+      if (i < unanswered.length - 1) await sleep(delayMs);
+    }
+
+    // ── Post-completion check: re-fetch status and resubmit missed ones ──────────
+    await sleep(delayMs);
+    const checkSpinner = ora("  Verifying submission status…").start();
+    try {
+      const refreshed = await getSqlQuestions(client, unit.unit_id);
+      const missed = refreshed.questions.filter(
+        (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
+      );
+      if (missed.length === 0) {
+        checkSpinner.succeed(`  All SQL questions confirmed CORRECT`);
+      } else {
+        checkSpinner.warn(`  ${missed.length} question(s) still not CORRECT — resubmitting…`);
+        for (const mq of missed) {
+          const cachedSql = sqlAnswers.get(mq.question_id);
+          if (!cachedSql) continue;
+          const mlabel = mq.question.short_text?.trim() || `Q${mq.question_number}`;
+          const rs = ora(`  Resubmitting: ${mlabel}…`).start();
+          try {
+            const reResult = await submitWithRetry([{
+              question_id: mq.question_id,
+              time_spent: 30,
+              user_response_code: { code_content: cachedSql, language: "SQL" as const },
+            }]);
+            const rr = reResult.submission_results[0];
+            if (rr?.evaluation_result === "CORRECT") {
+              rs.succeed(`  Resubmit CORRECT — ${mlabel}`);
+            } else {
+              rs.warn(`  Resubmit ${rr?.evaluation_result ?? "UNKNOWN"} — ${mlabel}`);
+            }
+          } catch (err) {
+            rs.fail(`  Resubmit failed — ${mlabel}`);
+            debugAxiosError("resubmitSql", err);
+          }
+          await sleep(delayMs);
+        }
+      }
+    } catch (err) {
+      checkSpinner.warn("  Could not verify status (non-fatal)");
+      debugAxiosError("getSqlQuestions (post-check)", err);
+    }
+
 
     return;
   }
@@ -336,13 +443,7 @@ async function handleQuestionSet(
 
   await sleep(delayMs);
 
-  // Solve each question individually (they may need different languages)
-  const codingResponses: Array<{
-    question_id: string;
-    time_spent: number;
-    coding_answer: { code_content: string; language: string };
-  }> = [];
-
+  // Solve and submit each question individually
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i]!;
     const summaryEntry = unanswered.find((s) => s.question_id === q.question_id);
@@ -366,52 +467,103 @@ async function handleQuestionSet(
 
     const encodedCode = encodeCodeContent(code);
 
-    // If question is NOT_ATTEMPTED, call start + save first to transition state
-    if (summaryEntry?.question_status === "NOT_ATTEMPTED") {
-      try {
-        await startCodingQuestion(client, q.question_id);
-        await saveCodingAnswer(client, q.question_id, encodedCode, lang);
-      } catch {
-        // non-fatal — backend may still accept the submit
-      }
-      await sleep(Math.max(delayMs / 2, 300));
+    // Always start the question before submitting — server requires it
+    // (returns USER_QUESTIONS_DOES_NOT_EXIST without this call)
+    const startSpinner = ora(`  Starting question on server…`).start();
+    try {
+      await startCodingQuestion(client, q.question_id);
+      startSpinner.succeed(`  Question started`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      startSpinner.warn(`  Start failed (${msg}) — attempting submit anyway`);
+      debugAxiosError("startCodingQuestion", err);
     }
 
-    codingResponses.push({
-      question_id: q.question_id,
-      time_spent: 30 + i * 10,
-      coding_answer: {
-        code_content: encodedCode,
-        language: lang,
-      },
-    });
+    await sleep(Math.max(delayMs / 2, 200));
+
+    // Submit immediately after
+    const submitSpinner = ora(`  Submitting answer…`).start();
+    try {
+      const result = await submitCodingAnswers(client, [{
+        question_id: q.question_id,
+        time_spent: 30 + i * 10,
+        coding_answer: {
+          code_content: encodedCode,
+          language: lang,
+        },
+      }]);
+      const r = result.submission_result[0];
+      if (r?.evaluation_result === "CORRECT") {
+        submitSpinner.succeed(
+          `  Submitted — ${chalk.green("CORRECT")}  score: ${r.user_response_score}`,
+        );
+      } else {
+        submitSpinner.warn(
+          `  Submitted — ${chalk.yellow(r?.evaluation_result ?? "UNKNOWN")}  (${r?.passed_test_cases_count ?? 0}/${r?.total_test_cases_count ?? "?"} tests passed)`,
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      submitSpinner.fail(`  Submit failed: ${msg}`);
+      debugAxiosError("submitCodingAnswers", err);
+    }
 
     if (i < questions.length - 1) await sleep(delayMs);
   }
 
-  // Submit all at once
-  const submitSpinner = ora(`  Submitting ${codingResponses.length} coding answer(s)…`).start();
+  // ── Post-completion check: re-fetch coding summary and resubmit missed ones ───
+  await sleep(delayMs);
+  const codingCheckSpinner = ora("  Verifying coding submission status…").start();
   try {
-    const result = await submitCodingAnswers(client, codingResponses);
-    const correct = result.submission_result.filter((r) => r.evaluation_result === "CORRECT").length;
-    const total = result.submission_result.length;
-    const totalScore = result.submission_result.reduce((a, r) => a + r.user_response_score, 0);
-    submitSpinner.succeed(
-      `  Coding submitted — ${chalk.green(`${correct}/${total}`)} correct  score: ${totalScore}`,
+    const refreshedSummary = await getCodingQuestionsSummary(client, unit.unit_id);
+    const stillWrong = refreshedSummary.filter(
+      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
     );
-
-    for (const r of result.submission_result) {
-      if (r.evaluation_result !== "CORRECT") {
-        const q = questions.find((q) => q.question_id === r.question_id);
-        log(
-          "warn",
-          `  ✗ ${q?.question.short_text ?? r.question_id} — ${r.passed_test_cases_count ?? 0}/${r.total_test_cases_count ?? "?"} tests passed`,
-        );
+    if (stillWrong.length === 0) {
+      codingCheckSpinner.succeed(`  All coding questions confirmed CORRECT`);
+    } else {
+      codingCheckSpinner.warn(`  ${stillWrong.length} question(s) still not CORRECT — resubmitting…`);
+      // Fetch details for the missed ones
+      const missedIds = stillWrong.map((q) => q.question_id);
+      let missedDetails: Awaited<ReturnType<typeof getCodingQuestions>>["questions"] = [];
+      try {
+        const res = await getCodingQuestions(client, missedIds);
+        missedDetails = res.questions;
+      } catch {
+        codingCheckSpinner.warn(`  Could not load missed question details — skipping resubmit`);
+      }
+      for (const mq of missedDetails) {
+        const summaryEntry = stillWrong.find((s) => s.question_id === mq.question_id);
+        const lang = pickLanguage(summaryEntry?.applicable_languages ?? [mq.code.language as any]);
+        const mlabel = mq.question.short_text ?? mq.question_id.slice(0, 8);
+        const rs = ora(`  Resubmitting: ${mlabel}…`).start();
+        try {
+          let code: string;
+          try { code = await solveCodingQuestion(mq, lang); }
+          catch { code = decodeCodeContentLocal(mq.code.code_content); }
+          await startCodingQuestion(client, mq.question_id);
+          await sleep(200);
+          const reResult = await submitCodingAnswers(client, [{
+            question_id: mq.question_id,
+            time_spent: 30,
+            coding_answer: { code_content: encodeCodeContent(code), language: lang },
+          }]);
+          const rr = reResult.submission_result[0];
+          if (rr?.evaluation_result === "CORRECT") {
+            rs.succeed(`  Resubmit CORRECT — ${mlabel}`);
+          } else {
+            rs.warn(`  Resubmit ${rr?.evaluation_result ?? "UNKNOWN"} — ${mlabel}`);
+          }
+        } catch (err) {
+          rs.fail(`  Resubmit failed — ${mlabel}`);
+          debugAxiosError("resubmitCoding", err);
+        }
+        await sleep(delayMs);
       }
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    submitSpinner.fail(`  Coding submit failed: ${msg}`);
+  } catch (err) {
+    codingCheckSpinner.warn("  Could not verify coding status (non-fatal)");
+    debugAxiosError("getCodingQuestionsSummary (post-check)", err);
   }
 }
 

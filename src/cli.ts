@@ -1,4 +1,4 @@
-import { input, password, checkbox, select, confirm, number } from "@inquirer/prompts";
+import { input, password, checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import type {
   Curriculum,
@@ -16,12 +16,12 @@ function banner(): void {
   console.log(
     chalk.bold.cyan(`
 
-███╗░░██╗██╗░█████╗░████████╗  ██████╗░██╗░░░██╗████████╗████████╗
-████╗░██║██║██╔══██╗╚══██╔══╝  ██╔══██╗██║░░░██║╚══██╔══╝╚══██╔══╝
-██╔██╗██║██║███████║░░░██║░░░  ██████╦╝██║░░░██║░░░██║░░░░░░██║░░░
-██║╚████║██║██╔══██║░░░██║░░░  ██╔══██╗██║░░░██║░░░██║░░░░░░██║░░░
-██║░╚███║██║██║░░██║░░░██║░░░  ██████╦╝╚██████╔╝░░░██║░░░░░░██║░░░
-╚═╝░░╚══╝╚═╝╚═╝░░╚═╝░░░╚═╝░░░  ╚═════╝░░╚═════╝░░░░╚═╝░░░░░░╚═╝░░░
+███╗░░██╗██╗░█████╗░████████╗  ██████╗░██╗░░░██╗████████╗████████╗
+████╗░██║██║██╔══██╗╚══██╔══╝  ██╔══██╗██║░░░██║╚══██╔══╝╚══██╔══╝
+██╔██╗██║██║███████║░░░██║░░░  ██████╦╝██║░░░██║░░░██║░░░░░░██║░░░
+██║╚████║██║██╔══██║░░░██║░░░  ██╔══██╗██║░░░██║░░░██║░░░░░░██║░░░
+██║░╚███║██║██║░░██║░░░██║░░░  ██████╦╝╚██████╔╝░░░██║░░░░░░██║░░░
+╚═╝░░╚══╝╚═╝╚═╝░░╚═╝░░░╚═╝░░░  ╚═════╝░░╚═════╝░░░░╚═╝░░░░░░╚═╝░░░
 
 ░█████╗░██████╗░░█████╗░░█████╗░██╗░░██╗███████╗██████╗░
 ██╔══██╗██╔══██╗██╔══██╗██╔══██╗██║░██╔╝██╔════╝██╔══██╗
@@ -38,29 +38,51 @@ function banner(): void {
 async function promptCredentials(): Promise<{ token: string; groqKey: string }> {
   console.log(chalk.bold.yellow("── Credentials ─────────────────────────────────\n"));
 
-  const token = await password({
-    message: "Bearer token (from browser DevTools / Network tab):",
-    mask: "•",
-    validate: (v) => (v.trim().length > 10 ? true : "Token looks too short"),
-  });
-
-  // Try to load Groq key from config
-  let groqKey = "";
   const cfg = await loadConfig();
+
+  // ── Token: reuse saved or ask for new ─────────────────────────────────────
+  let token = "";
+  if (cfg.token && cfg.token.length > 10) {
+    const masked = cfg.token.slice(0, 6) + "••••••••••••••••" + cfg.token.slice(-4);
+    const reuse = await select<"reuse" | "new">({
+      message: `Saved bearer token (${masked}):`,
+      choices: [
+        { name: "Use saved token", value: "reuse" },
+        { name: "Enter a new token", value: "new" },
+      ],
+    });
+    if (reuse === "reuse") {
+      token = cfg.token;
+      console.log(chalk.gray("Using saved token."));
+    }
+  }
+
+  if (!token) {
+    token = (await password({
+      message: "Bearer token (from browser DevTools / Network tab):",
+      mask: "•",
+      validate: (v) => (v.trim().length > 10 ? true : "Token looks too short"),
+    })).trim();
+    await saveConfig({ ...cfg, token });
+    console.log(chalk.gray("Token saved for next run."));
+  }
+
+  // ── Groq key: reuse saved or ask for new ──────────────────────────────────
+  let groqKey = "";
   if (cfg.groqKey && cfg.groqKey.startsWith("gsk_")) {
     groqKey = cfg.groqKey;
     console.log(chalk.gray("Loaded Groq API key from config."));
   } else {
-    groqKey = await password({
+    groqKey = (await password({
       message: "Groq API key (for AI question solving — get at console.groq.com):",
       mask: "•",
       validate: (v) => (v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'),
-    });
-    await saveConfig({ groqKey: groqKey.trim() });
+    })).trim();
+    await saveConfig({ ...cfg, groqKey });
     console.log(chalk.green("Groq API key saved for future runs."));
   }
 
-  return { token: token.trim(), groqKey: groqKey.trim() };
+  return { token, groqKey };
 }
 
 // ── Semester / course selection ───────────────────────────────────────────────
@@ -113,61 +135,61 @@ async function selectTopicLimit(course: CurriculumCourse): Promise<number | "all
 
   if (choice === "all") return "all";
 
-  const n = await number({
+  const raw = await input({
     message: `How many topics (1–${course.no_of_topics})?`,
-    min: 1,
-    max: course.no_of_topics,
-    default: course.no_of_topics,
+    default: String(course.no_of_topics),
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      return (n >= 1 && n <= course.no_of_topics) ? true : `Enter a number between 1 and ${course.no_of_topics}`;
+    },
   });
 
-  return n ?? course.no_of_topics;
+  return parseInt(raw, 10);
 }
+
+// ── Mode selection (multi-pick, shows component labels) ───────────────────────
 
 async function selectMode(): Promise<CompletionMode> {
-  console.log(chalk.bold.yellow("\n── Completion Mode ──────────────────────────────\n"));
+  console.log(chalk.bold.yellow("\n── What to complete ─────────────────────────────\n"));
+  console.log(chalk.gray("Space = toggle  •  A = select all  •  Enter = confirm\n"));
 
-  return select<CompletionMode>({
+  const choices = [
+    {
+      name: `${chalk.blue("Learning Sets")} — Mark video/reading resources as done`,
+      value: "learning_sets" as const,
+      checked: false,
+    },
+    {
+      name: `${chalk.magenta("Practice Sets")} — Attempt and submit MCQ practice exams`,
+      value: "practice" as const,
+      checked: false,
+    },
+    {
+      name: `${chalk.yellow("Question Sets")} — Solve SQL/Coding questions with AI`,
+      value: "question_sets" as const,
+      checked: false,
+    },
+  ];
+
+  const selected = await checkbox<"learning_sets" | "practice" | "question_sets">({
     message: "What should be completed?",
-    choices: [
-      {
-        name: `${chalk.green("All")} — Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
-        value: "all",
-      },
-      {
-        name: `${chalk.blue("Learning Sets only")} — Mark video/reading resources as done`,
-        value: "learning_sets",
-      },
-      {
-        name: `${chalk.magenta("Practice Sets only")} — Attempt and submit MCQ practice exams`,
-        value: "practice",
-      },
-      {
-        name: `${chalk.yellow("Question Sets only")} — Solve SQL/Coding practice questions with AI`,
-        value: "question_sets",
-      },
-    ],
-  });
-}
-
-async function selectOptions(): Promise<{ skipCompleted: boolean; delayMs: number }> {
-  console.log(chalk.bold.yellow("\n── Options ──────────────────────────────────────\n"));
-
-  const skipCompleted = await confirm({
-    message: "Skip already-completed units?",
-    default: true,
+    choices,
+    validate: (v) => (v.length > 0 ? true : "Select at least one option"),
   });
 
-  const delayChoice = await select<number>({
-    message: "Delay between API requests:",
-    choices: [
-      { name: "1 second (safe, slow)", value: 1000 },
-      { name: "0.5 seconds (moderate)", value: 500 },
-      { name: "0.2 seconds (fast, may get rate-limited)", value: 200 },
-    ],
-    default: 1000,
-  });
+  // Map multi-select back to CompletionMode
+  const hasLearning = selected.includes("learning_sets");
+  const hasPractice = selected.includes("practice");
+  const hasQuestions = selected.includes("question_sets");
 
-  return { skipCompleted, delayMs: delayChoice };
+  if (hasLearning && hasPractice && hasQuestions) return "all";
+  if (hasLearning && !hasPractice && !hasQuestions) return "learning_sets";
+  if (!hasLearning && hasPractice && !hasQuestions) return "practice";
+  if (!hasLearning && !hasPractice && hasQuestions) return "question_sets";
+
+  // Mixed subset — use "all" and let runner filter naturally
+  // (runner already skips based on mode, so extra selections are harmless)
+  return "all";
 }
 
 // ── Summary & confirm ─────────────────────────────────────────────────────────
@@ -188,7 +210,6 @@ function printSummary(config: Omit<RunConfig, "token" | "groqKey">): void {
   };
 
   console.log(`\n  Mode:          ${chalk.green(modeLabel[config.mode])}`);
-  console.log(`  Skip done:     ${config.skipCompleted ? chalk.green("yes") : chalk.red("no")}`);
   console.log(`  Request delay: ${config.delayMs}ms\n`);
 }
 
@@ -212,7 +233,10 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
   }
 
   const mode = await selectMode();
-  const { skipCompleted, delayMs } = await selectOptions();
+
+  // Hardcoded: always skip completed, use 100ms delay
+  const skipCompleted = true;
+  const delayMs = 100;
 
   const config: RunConfig = {
     token,
@@ -225,11 +249,8 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
 
   printSummary({ selectedCourses, mode, skipCompleted, delayMs });
 
-  const go = await confirm({ message: "Start automation?", default: true });
-  if (!go) {
-    console.log(chalk.yellow("\nAborted."));
-    process.exit(0);
-  }
+  // Single Enter to start — no y/n confirm
+  await input({ message: chalk.green("Press Enter to start automation…"), default: "" });
 
   return config;
 }

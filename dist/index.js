@@ -4,10 +4,10 @@
 import { readFile as readFile2 } from "fs/promises";
 import { fileURLToPath } from "url";
 import { join as join2, dirname } from "path";
-import chalk3 from "chalk";
+import chalk4 from "chalk";
 
 // src/cli.ts
-import { password, checkbox, select, confirm, number } from "@inquirer/prompts";
+import { input, password, checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
 
 // src/config.ts
@@ -31,12 +31,12 @@ function banner() {
   console.log(
     chalk.bold.cyan(`
 
-\u2588\u2588\u2588\u2557\u2591\u2591\u2588\u2588\u2557\u2588\u2588\u2557\u2591\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2003\u2003\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2557\u2591\u2591\u2591\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557
-\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D\u2003\u2003\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D
-\u2588\u2588\u2554\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2003\u2003\u2588\u2588\u2588\u2588\u2588\u2588\u2566\u255D\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
-\u2588\u2588\u2551\u255A\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2003\u2003\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
-\u2588\u2588\u2551\u2591\u255A\u2588\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2551\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2003\u2003\u2588\u2588\u2588\u2588\u2588\u2588\u2566\u255D\u255A\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
-\u255A\u2550\u255D\u2591\u2591\u255A\u2550\u2550\u255D\u255A\u2550\u255D\u255A\u2550\u255D\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591\u2003\u2003\u255A\u2550\u2550\u2550\u2550\u2550\u255D\u2591\u2591\u255A\u2550\u2550\u2550\u2550\u2550\u255D\u2591\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591
+\u2588\u2588\u2588\u2557\u2591\u2591\u2588\u2588\u2557\u2588\u2588\u2557\u2591\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2557\u2591\u2591\u2591\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557
+\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D  \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D\u255A\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255D
+\u2588\u2588\u2554\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591  \u2588\u2588\u2588\u2588\u2588\u2588\u2566\u255D\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
+\u2588\u2588\u2551\u255A\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591  \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
+\u2588\u2588\u2551\u2591\u255A\u2588\u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2551\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591  \u2588\u2588\u2588\u2588\u2588\u2588\u2566\u255D\u255A\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255D\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591\u2591\u2591\u2591\u2588\u2588\u2551\u2591\u2591\u2591
+\u255A\u2550\u255D\u2591\u2591\u255A\u2550\u2550\u255D\u255A\u2550\u255D\u255A\u2550\u255D\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591  \u255A\u2550\u2550\u2550\u2550\u2550\u255D\u2591\u2591\u255A\u2550\u2550\u2550\u2550\u2550\u255D\u2591\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591\u2591\u2591\u2591\u255A\u2550\u255D\u2591\u2591\u2591
 
 \u2591\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2591\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2591\u2588\u2588\u2588\u2588\u2588\u2557\u2591\u2588\u2588\u2557\u2591\u2591\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2591
 \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2591\u2588\u2588\u2554\u255D\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255D\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557
@@ -49,26 +49,45 @@ function banner() {
 }
 async function promptCredentials() {
   console.log(chalk.bold.yellow("\u2500\u2500 Credentials \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
-  const token = await password({
-    message: "Bearer token (from browser DevTools / Network tab):",
-    mask: "\u2022",
-    validate: (v) => v.trim().length > 10 ? true : "Token looks too short"
-  });
-  let groqKey = "";
   const cfg = await loadConfig();
+  let token = "";
+  if (cfg.token && cfg.token.length > 10) {
+    const masked = cfg.token.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + cfg.token.slice(-4);
+    const reuse = await select({
+      message: `Saved bearer token (${masked}):`,
+      choices: [
+        { name: "Use saved token", value: "reuse" },
+        { name: "Enter a new token", value: "new" }
+      ]
+    });
+    if (reuse === "reuse") {
+      token = cfg.token;
+      console.log(chalk.gray("Using saved token."));
+    }
+  }
+  if (!token) {
+    token = (await password({
+      message: "Bearer token (from browser DevTools / Network tab):",
+      mask: "\u2022",
+      validate: (v) => v.trim().length > 10 ? true : "Token looks too short"
+    })).trim();
+    await saveConfig({ ...cfg, token });
+    console.log(chalk.gray("Token saved for next run."));
+  }
+  let groqKey = "";
   if (cfg.groqKey && cfg.groqKey.startsWith("gsk_")) {
     groqKey = cfg.groqKey;
     console.log(chalk.gray("Loaded Groq API key from config."));
   } else {
-    groqKey = await password({
+    groqKey = (await password({
       message: "Groq API key (for AI question solving \u2014 get at console.groq.com):",
       mask: "\u2022",
       validate: (v) => v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'
-    });
-    await saveConfig({ groqKey: groqKey.trim() });
+    })).trim();
+    await saveConfig({ ...cfg, groqKey });
     console.log(chalk.green("Groq API key saved for future runs."));
   }
-  return { token: token.trim(), groqKey: groqKey.trim() };
+  return { token, groqKey };
 }
 async function selectSemester(curriculum) {
   console.log(chalk.bold.yellow("\n\u2500\u2500 Semester Selection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
@@ -109,54 +128,49 @@ async function selectTopicLimit(course) {
     ]
   });
   if (choice === "all") return "all";
-  const n = await number({
+  const raw = await input({
     message: `How many topics (1\u2013${course.no_of_topics})?`,
-    min: 1,
-    max: course.no_of_topics,
-    default: course.no_of_topics
+    default: String(course.no_of_topics),
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      return n >= 1 && n <= course.no_of_topics ? true : `Enter a number between 1 and ${course.no_of_topics}`;
+    }
   });
-  return n ?? course.no_of_topics;
+  return parseInt(raw, 10);
 }
 async function selectMode() {
-  console.log(chalk.bold.yellow("\n\u2500\u2500 Completion Mode \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
-  return select({
+  console.log(chalk.bold.yellow("\n\u2500\u2500 What to complete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
+  console.log(chalk.gray("Space = toggle  \u2022  A = select all  \u2022  Enter = confirm\n"));
+  const choices = [
+    {
+      name: `${chalk.blue("Learning Sets")} \u2014 Mark video/reading resources as done`,
+      value: "learning_sets",
+      checked: false
+    },
+    {
+      name: `${chalk.magenta("Practice Sets")} \u2014 Attempt and submit MCQ practice exams`,
+      value: "practice",
+      checked: false
+    },
+    {
+      name: `${chalk.yellow("Question Sets")} \u2014 Solve SQL/Coding questions with AI`,
+      value: "question_sets",
+      checked: false
+    }
+  ];
+  const selected = await checkbox({
     message: "What should be completed?",
-    choices: [
-      {
-        name: `${chalk.green("All")} \u2014 Learning Sets ${chalk.dim("+")} Practice Sets ${chalk.dim("+")} Question Sets`,
-        value: "all"
-      },
-      {
-        name: `${chalk.blue("Learning Sets only")} \u2014 Mark video/reading resources as done`,
-        value: "learning_sets"
-      },
-      {
-        name: `${chalk.magenta("Practice Sets only")} \u2014 Attempt and submit MCQ practice exams`,
-        value: "practice"
-      },
-      {
-        name: `${chalk.yellow("Question Sets only")} \u2014 Solve SQL/Coding practice questions with AI`,
-        value: "question_sets"
-      }
-    ]
+    choices,
+    validate: (v) => v.length > 0 ? true : "Select at least one option"
   });
-}
-async function selectOptions() {
-  console.log(chalk.bold.yellow("\n\u2500\u2500 Options \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
-  const skipCompleted = await confirm({
-    message: "Skip already-completed units?",
-    default: true
-  });
-  const delayChoice = await select({
-    message: "Delay between API requests:",
-    choices: [
-      { name: "1 second (safe, slow)", value: 1e3 },
-      { name: "0.5 seconds (moderate)", value: 500 },
-      { name: "0.2 seconds (fast, may get rate-limited)", value: 200 }
-    ],
-    default: 1e3
-  });
-  return { skipCompleted, delayMs: delayChoice };
+  const hasLearning = selected.includes("learning_sets");
+  const hasPractice = selected.includes("practice");
+  const hasQuestions = selected.includes("question_sets");
+  if (hasLearning && hasPractice && hasQuestions) return "all";
+  if (hasLearning && !hasPractice && !hasQuestions) return "learning_sets";
+  if (!hasLearning && hasPractice && !hasQuestions) return "practice";
+  if (!hasLearning && !hasPractice && hasQuestions) return "question_sets";
+  return "all";
 }
 function printSummary(config) {
   console.log(chalk.bold.yellow("\n\u2500\u2500 Run Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
@@ -172,7 +186,6 @@ function printSummary(config) {
   };
   console.log(`
   Mode:          ${chalk.green(modeLabel[config.mode])}`);
-  console.log(`  Skip done:     ${config.skipCompleted ? chalk.green("yes") : chalk.red("no")}`);
   console.log(`  Request delay: ${config.delayMs}ms
 `);
 }
@@ -191,7 +204,8 @@ async function runPrompts(curriculum) {
     });
   }
   const mode = await selectMode();
-  const { skipCompleted, delayMs } = await selectOptions();
+  const skipCompleted = true;
+  const delayMs = 100;
   const config = {
     token,
     groqKey,
@@ -201,11 +215,7 @@ async function runPrompts(curriculum) {
     delayMs
   };
   printSummary({ selectedCourses, mode, skipCompleted, delayMs });
-  const go = await confirm({ message: "Start automation?", default: true });
-  if (!go) {
-    console.log(chalk.yellow("\nAborted."));
-    process.exit(0);
-  }
+  await input({ message: chalk.green("Press Enter to start automation\u2026"), default: "" });
   return config;
 }
 
@@ -328,21 +338,48 @@ async function submitSqlAnswers(client, responses) {
 }
 async function startCodingQuestion(client, questionId) {
   await client.post(
-    "/api/nkb_coding_practice/user/question/config/v1/",
-    buildPayload({ question_id: questionId })
-  );
-}
-async function saveCodingAnswer(client, questionId, codeContent, language) {
-  await client.post(
-    "/api/nkb_coding_practice/question/coding/save/",
-    buildPayload({
-      responses: [{ question_id: questionId, coding_answer: { code_content: codeContent, language } }]
-    })
+    "/api/nkb_coding_practice/coding/question/start/",
+    buildPayload({ question_id: questionId, should_mark_attempted: true })
   );
 }
 
 // src/solver.ts
 import Groq from "groq-sdk";
+import axios2 from "axios";
+
+// src/logger.ts
+import chalk2 from "chalk";
+var IS_DEBUG = process.env.DEBUG === "1";
+function debug(label, ...args) {
+  if (!IS_DEBUG) return;
+  console.log(chalk2.gray(`  [DBG] ${label}`), ...args);
+}
+function debugAxiosError(context, err) {
+  if (!IS_DEBUG) return;
+  const ax = err;
+  if (!ax.isAxiosError) {
+    debug(context, err);
+    return;
+  }
+  const res = ax.response;
+  console.log(chalk2.bgRed.white(`
+  [DBG] ${context} \u2014 HTTP ${res?.status ?? "?"}`));
+  if (res?.headers) {
+    console.log(chalk2.gray("  Request URL:"), chalk2.dim(ax.config?.url ?? ""));
+    console.log(chalk2.gray("  Request body:"), chalk2.dim(
+      typeof ax.config?.data === "string" ? ax.config.data.slice(0, 500) : JSON.stringify(ax.config?.data)
+    ));
+  }
+  console.log(chalk2.gray("  Response body:"));
+  try {
+    console.log(chalk2.yellow(JSON.stringify(res?.data, null, 2)));
+  } catch {
+    console.log(chalk2.yellow(String(res?.data)));
+  }
+  console.log();
+}
+
+// src/solver.ts
 var groqClient = null;
 function initGroq(apiKey) {
   groqClient = new Groq({ apiKey });
@@ -438,21 +475,54 @@ async function solveAll(questions, onProgress) {
   }
   return answers;
 }
-function buildSqlPrompt(questions, dbContext) {
-  const schema = dbContext.replace(/<[^>]+>/g, "").replace(/\r\n/g, "\n").trim();
+async function fetchDbSchema(dbUrl) {
+  if (!dbUrl) return "";
+  try {
+    const res = await axios2.get(dbUrl, { responseType: "arraybuffer", timeout: 1e4 });
+    const buf = Buffer.from(res.data);
+    const initSqlJs = (await import("sql.js")).default;
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(buf);
+    const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").flatMap((r) => r.values.map((v) => String(v[0])));
+    if (tables.length === 0) return "";
+    const schemaParts = [];
+    for (const table of tables) {
+      const cols = db.exec(`PRAGMA table_info(${table})`).flatMap((r) => r.values.map((v) => `${v[1]} ${v[2]}`));
+      schemaParts.push(`TABLE ${table} (${cols.join(", ")})`);
+    }
+    db.close();
+    return schemaParts.join("\n");
+  } catch (err) {
+    debug("[fetchDbSchema] Failed to fetch/parse DB:", err instanceof Error ? err.message : err);
+    return "";
+  }
+}
+function buildSqlPrompt(questions, dbContext, realSchema) {
+  const description = dbContext.replace(/<[^>]+>/g, "").replace(/\r\n/g, "\n").trim();
   const parts = [
-    "You are an expert SQL developer. Given the database schema below, write SQL answers for each numbered question.",
-    "",
-    `Database context:
-${schema}`,
-    "",
-    "Questions:"
+    "You are an expert SQL developer. Write correct SQL queries for each question.",
+    ""
   ];
+  if (realSchema) {
+    parts.push("ACTUAL DATABASE SCHEMA (use EXACTLY these table/column names):");
+    parts.push(realSchema);
+  } else if (description) {
+    parts.push("Database context:");
+    parts.push(description);
+  } else {
+    parts.push("(No schema provided \u2014 infer table/column names from starter SQL and question text)");
+  }
+  parts.push("", "Questions:");
   for (const q of questions) {
     const text = q.question.content.replace(/<[^>]+>/g, "").trim();
+    const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim();
     parts.push(`
 [${q.question_id}]
 ${text}`);
+    if (starter && starter !== "SELECT" && starter.length > 2) {
+      parts.push(`Starter SQL (shows column/table names):
+${starter}`);
+    }
   }
   parts.push(
     "\nRespond with ONLY a JSON object mapping each question_id to its SQL answer string, like:",
@@ -461,14 +531,17 @@ ${text}`);
   );
   return parts.join("\n");
 }
-async function solveSqlQuestions(questions, dbContext, onProgress) {
+async function solveSqlQuestions(questions, dbContext, realSchema, onProgress) {
   if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
   const answers = /* @__PURE__ */ new Map();
+  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none \u2014 using description context)"}`);
   const BATCH = 10;
   let done = 0;
   for (let i = 0; i < questions.length; i += BATCH) {
     const batch = questions.slice(i, i + BATCH);
-    const prompt = buildSqlPrompt(batch, dbContext);
+    const prompt = buildSqlPrompt(batch, dbContext, realSchema);
+    debug(`[SQL Solver] Prompt for batch ${Math.floor(i / BATCH) + 1}:
+${prompt}`);
     let parsed = {};
     let lastError;
     for (const model of MODELS) {
@@ -486,8 +559,11 @@ async function solveSqlQuestions(questions, dbContext, onProgress) {
           temperature: 0
         });
         const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
+        debug(`[SQL Solver] Raw AI response (${model}):
+${raw}`);
         const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
         parsed = JSON.parse(cleaned);
+        debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
         break;
       } catch (err) {
         lastError = err;
@@ -495,10 +571,14 @@ async function solveSqlQuestions(questions, dbContext, onProgress) {
     }
     if (Object.keys(parsed).length === 0 && lastError) {
       for (const q of batch) {
+        const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
         const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.
 
-Database: ${dbContext}
-
+${realSchema ? `Schema:
+${realSchema}` : `Database: ${dbContext}`}
+${starter ? `Starter SQL:
+${starter}
+` : ""}
 Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
         try {
           const completion = await groqClient.chat.completions.create({
@@ -525,6 +605,50 @@ Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
   }
   return answers;
 }
+async function refineSqlAnswer(question, failedSql, errorMessage, realSchema, dbContext) {
+  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
+  const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
+  const prompt = [
+    "Your previous SQL query returned the WRONG result. Fix it.",
+    "",
+    schema ? `Database schema:
+${schema}` : "",
+    "",
+    `Question:
+${questionText}`,
+    "",
+    `Your WRONG SQL:
+${failedSql}`,
+    "",
+    `Error / mismatch from the database:
+${errorMessage}`,
+    "",
+    "Write the CORRECTED SQL. Respond with ONLY the SQL, no explanation, no markdown."
+  ].filter(Boolean).join("\n");
+  debug(`[SQL Refine] Retry prompt:
+${prompt}`);
+  for (const model of MODELS) {
+    try {
+      const completion = await groqClient.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL." },
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 512,
+        temperature: 0
+      });
+      const raw = completion.choices[0]?.message?.content?.trim() ?? failedSql;
+      const fixed = raw.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+      debug(`[SQL Refine] Fixed SQL (${model}):
+${fixed}`);
+      return fixed;
+    } catch {
+    }
+  }
+  return failedSql;
+}
 function pickLanguage(applicable) {
   const preference = ["PYTHON", "NODE_JS", "CPP", "JAVA"];
   for (const lang of preference) {
@@ -545,7 +669,7 @@ function encodeCodeContent(code) {
   return JSON.stringify(code);
 }
 function buildCodingPrompt(q, lang, template) {
-  const questionText = q.question.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  const questionText = q.question.content.replace(/<br\s*\/?>\n?/gi, "\n").replace(/<[^>]+>/g, "").trim();
   const testCasesText = q.test_cases.map((tc, i) => {
     const inp = decodeCodeContent(tc.input);
     const out = decodeCodeContent(tc.output);
@@ -559,6 +683,14 @@ function buildCodingPrompt(q, lang, template) {
     PYTHON: "Python 3",
     NODE_JS: "Node.js (JavaScript)"
   };
+  const outputRule = lang === "CPP" ? [
+    "CRITICAL RULES FOR C++:",
+    "- You MUST fill in the function body inside the existing class.",
+    "- Do NOT add int main() or any code outside the class.",
+    "- Do NOT change the class name, function signature, or parameters.",
+    "- Return the complete file exactly as given: #include lines + class with filled function body.",
+    "- The judge calls your function directly \u2014 a main() will cause compile errors."
+  ].join("\n") : "Respond with ONLY the complete runnable code. No explanation, no markdown fences.";
   return [
     `You are an expert ${langLabel[lang] ?? lang} developer. Complete the following coding problem.`,
     "",
@@ -570,35 +702,40 @@ ${testCasesText}` : "",
     "",
     `Language: ${langLabel[lang] ?? lang}`,
     "",
-    `Template code (fill in the blanks, keep the structure):
-\`\`\`
+    `TEMPLATE TO COMPLETE (keep all existing structure, only fill the function body):
+\`\`\`${lang === "CPP" ? "cpp" : ""}
 ${template}
 \`\`\``,
     "",
-    "Respond with ONLY the complete runnable code. No explanation, no markdown fences."
+    outputRule
   ].filter(Boolean).join("\n");
 }
 async function solveCodingQuestion(q, lang) {
   if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
-  const template = decodeCodeContent(q.code.code_content);
+  const defaultTemplate = decodeCodeContent(q.code.code_content);
+  const savedTemplate = q.latest_saved_code ? decodeCodeContent(q.latest_saved_code.code_content) : null;
+  const template = savedTemplate && savedTemplate.length > defaultTemplate.length + 20 ? savedTemplate : defaultTemplate;
   const prompt = buildCodingPrompt(q, lang, template);
+  debug(`[Coding] Prompt for "${q.question.short_text}":
+${prompt}`);
+  const systemMessage = lang === "CPP" ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation." : "You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.";
   let lastError;
   for (const model of MODELS) {
     try {
       const completion = await groqClient.chat.completions.create({
         model,
         messages: [
-          {
-            role: "system",
-            content: `You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.`
-          },
+          { role: "system", content: systemMessage },
           { role: "user", content: prompt }
         ],
         max_tokens: 1024,
         temperature: 0
       });
       const raw = completion.choices[0]?.message?.content?.trim() ?? template;
-      return raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+      const cleaned = raw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+      debug(`[Coding] Response (${model}):
+${cleaned.slice(0, 300)}...`);
+      return cleaned;
     } catch (err) {
       lastError = err;
     }
@@ -607,16 +744,16 @@ async function solveCodingQuestion(q, lang) {
 }
 
 // src/runner.ts
-import chalk2 from "chalk";
+import chalk3 from "chalk";
 import ora from "ora";
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function log(level, msg) {
   const prefix = {
-    info: chalk2.blue("  \u2139"),
-    ok: chalk2.green("  \u2714 "),
-    warn: chalk2.yellow("  \u26A0"),
-    skip: chalk2.gray("  \u2500"),
-    err: chalk2.red("  \u2716 ")
+    info: chalk3.blue("  \u2139"),
+    ok: chalk3.green("  \u2714 "),
+    warn: chalk3.yellow("  \u26A0"),
+    skip: chalk3.gray("  \u2500"),
+    err: chalk3.red("  \u2716 ")
   };
   console.log(`${prefix[level]} ${msg}`);
 }
@@ -625,41 +762,42 @@ async function handleLearningSet(client, unit, skipCompleted, delayMs) {
   if (skipCompleted && unit.completion_status === "COMPLETED") {
     log(
       "skip",
-      `Learning Set: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`
+      `Learning Set: ${chalk3.dim(name)} ${chalk3.gray("(already done)")}`
     );
     return;
   }
   const spinner = ora({ text: `Learning Set: ${name}`, color: "cyan" }).start();
   try {
     await completeLearningSet(client, unit.unit_id);
-    spinner.succeed(chalk2.green(`Learning Set: ${name}`));
+    spinner.succeed(chalk3.green(`Learning Set: ${name}`));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    spinner.fail(chalk2.red(`Learning Set: ${name} \u2014 ${msg}`));
+    spinner.fail(chalk3.red(`Learning Set: ${name} \u2014 ${msg}`));
+    debugAxiosError("completeLearningSet", err);
   }
   await sleep(delayMs);
 }
 async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
   const name = unit.practice_unit_details?.name ?? unit.unit_id;
   if (skipCompleted && unit.completion_percentage >= 100) {
-    log("skip", `Practice: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`);
+    log("skip", `Practice: ${chalk3.dim(name)} ${chalk3.gray("(already done)")}`);
     return;
   }
   if (unit.is_unit_locked) {
     log(
       "warn",
-      `Practice: ${chalk2.dim(name)} ${chalk2.yellow("(locked \u2014 skipping)")}`
+      `Practice: ${chalk3.dim(name)} ${chalk3.yellow("(locked \u2014 skipping)")}`
     );
     return;
   }
-  console.log(chalk2.bold(`
-  \u25B8 Practice: ${chalk2.cyan(name)}`));
+  console.log(chalk3.bold(`
+  \u25B8 Practice: ${chalk3.cyan(name)}`));
   let examAttemptId;
   const attemptSpinner = ora("  Creating exam attempt\u2026").start();
   try {
     const attempt = await createExamAttempt(client, unit.unit_id);
     examAttemptId = attempt.exam_attempt_id;
-    attemptSpinner.succeed(`  Exam attempt: ${chalk2.dim(examAttemptId)}`);
+    attemptSpinner.succeed(`  Exam attempt: ${chalk3.dim(examAttemptId)}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     attemptSpinner.fail(`  Failed to create attempt: ${msg}`);
@@ -719,11 +857,12 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
       0
     );
     submitSpinner.succeed(
-      `  Submitted \u2014 ${chalk2.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`
+      `  Submitted \u2014 ${chalk3.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     submitSpinner.fail(`  Submit failed: ${msg}`);
+    debugAxiosError("submitAnswers (practice)", err);
   }
   await sleep(delayMs);
   const endSpinner = ora("  Ending attempt\u2026").start();
@@ -738,15 +877,15 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
 async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
   const name = unit.question_set_unit_details?.name ?? unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
   if (skipCompleted && unit.completion_percentage >= 100) {
-    log("skip", `Question Set: ${chalk2.dim(name)} ${chalk2.gray("(already done)")}`);
+    log("skip", `Question Set: ${chalk3.dim(name)} ${chalk3.gray("(already done)")}`);
     return;
   }
   if (unit.is_unit_locked) {
-    log("warn", `Question Set: ${chalk2.dim(name)} ${chalk2.yellow("(locked \u2014 skipping)")}`);
+    log("warn", `Question Set: ${chalk3.dim(name)} ${chalk3.yellow("(locked \u2014 skipping)")}`);
     return;
   }
-  console.log(chalk2.bold(`
-  \u25B8 Question Set: ${chalk2.cyan(name)}`));
+  console.log(chalk3.bold(`
+  \u25B8 Question Set: ${chalk3.cyan(name)}`));
   let isSql = false;
   let sqlQuestions = null;
   const probeSpinner = ora("  Detecting question set type\u2026").start();
@@ -757,10 +896,10 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
       sqlQuestions = res;
       probeSpinner.succeed(`  SQL Question Set \u2014 ${res.questions.length} question(s)`);
     } else {
-      probeSpinner.succeed("  Coding Question Set (no SQL questions found)");
+      probeSpinner.succeed("  Coding Question Set");
     }
   } catch {
-    probeSpinner.succeed("  Coding Question Set (SQL probe failed)");
+    probeSpinner.succeed("  Coding Question Set");
   }
   await sleep(delayMs);
   if (isSql && sqlQuestions) {
@@ -772,10 +911,18 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
       return;
     }
     const dbContext = sqlQuestions.learning_resource_details?.content ?? "";
+    const dbUrl = sqlQuestions.db_url ?? "";
+    const schemaSpinner = ora("  Fetching DB schema\u2026").start();
+    const realSchema = await fetchDbSchema(dbUrl);
+    if (realSchema) {
+      schemaSpinner.succeed(`  DB schema loaded \u2014 ${realSchema.split("\n").length} table(s)`);
+    } else {
+      schemaSpinner.warn("  Could not fetch DB schema (will use description context)");
+    }
     const solveSpinner = ora(`  Solving ${unanswered2.length} SQL question(s) with AI\u2026`).start();
     let sqlAnswers;
     try {
-      sqlAnswers = await solveSqlQuestions(unanswered2, dbContext, (done, total) => {
+      sqlAnswers = await solveSqlQuestions(unanswered2, dbContext, realSchema, (done, total) => {
         solveSpinner.text = `  Solving SQL questions with AI\u2026 ${done}/${total}`;
       });
       solveSpinner.succeed(`  Solved ${sqlAnswers.size} SQL question(s)`);
@@ -785,31 +932,110 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
       return;
     }
     await sleep(delayMs);
-    const submitSpinner2 = ora("  Submitting SQL answers\u2026").start();
-    try {
-      const responses = unanswered2.filter((q) => sqlAnswers.has(q.question_id)).map((q, i) => ({
-        question_id: q.question_id,
-        time_spent: 10 + i * 5,
-        user_response_code: {
-          code_content: sqlAnswers.get(q.question_id),
-          language: "SQL"
+    const MAX_AI_RETRIES = 5;
+    const MAX_NET_RETRIES = 3;
+    async function submitWithRetry(payload) {
+      let lastErr;
+      for (let n = 0; n < MAX_NET_RETRIES; n++) {
+        try {
+          return await submitSqlAnswers(client, payload);
+        } catch (err) {
+          const status = err?.response?.status;
+          if (status && status < 500) throw err;
+          lastErr = err;
+          const wait = 1e3 * 2 ** n;
+          debug(`[SQL Submit] Network/5xx error (attempt ${n + 1}), retrying in ${wait}ms\u2026`);
+          await sleep(wait);
         }
-      }));
-      const result = await submitSqlAnswers(client, responses);
-      const correct = result.submission_results.filter((r) => r.evaluation_result === "CORRECT").length;
-      const total = result.submission_results.length;
-      submitSpinner2.succeed(
-        `  SQL submitted \u2014 ${chalk2.green(`${correct}/${total}`)} correct`
+      }
+      throw lastErr;
+    }
+    for (let i = 0; i < unanswered2.length; i++) {
+      const q = unanswered2[i];
+      let currentSql = sqlAnswers.get(q.question_id);
+      if (!currentSql) continue;
+      const label = q.question.short_text?.trim() || `Q${q.question_number}` || q.question_id.slice(0, 8);
+      for (let attempt = 0; attempt <= MAX_AI_RETRIES; attempt++) {
+        const isRetry = attempt > 0;
+        const tag = isRetry ? ` (retry ${attempt}/${MAX_AI_RETRIES})` : "";
+        const submitSpinner = ora(`  [${i + 1}/${unanswered2.length}] Submitting${tag}: ${label}\u2026`).start();
+        debug(`[SQL Q${q.question_number}] Attempt ${attempt + 1} SQL:
+${currentSql}`);
+        let evalResult;
+        let errorDetail;
+        try {
+          const result = await submitWithRetry([{
+            question_id: q.question_id,
+            time_spent: 10 + i * 5 + attempt * 3,
+            user_response_code: { code_content: currentSql, language: "SQL" }
+          }]);
+          const r = result.submission_results[0];
+          evalResult = r?.evaluation_result;
+          if (evalResult === "CORRECT") {
+            const tag2 = isRetry ? chalk3.dim(` (fixed on retry ${attempt})`) : "";
+            submitSpinner.succeed(`  [${i + 1}/${unanswered2.length}] ${chalk3.green("CORRECT")} \u2014 ${label}${tag2}`);
+            break;
+          }
+          const sub = r?.coding_submission_response;
+          errorDetail = sub?.reason_for_error ?? (sub?.reason_for_failures?.length ? sub.reason_for_failures.join("\n") : null) ?? `${sub?.passed_test_cases_count ?? 0}/${sub?.total_test_cases_count ?? "?"} tests passed`;
+          if (attempt < MAX_AI_RETRIES) {
+            submitSpinner.warn(`  [${i + 1}/${unanswered2.length}] ${chalk3.yellow("INCORRECT")} \u2014 ${label} \u2014 asking AI to fix\u2026`);
+            debug(`[SQL Q${q.question_number}] Error:
+${errorDetail}`);
+            currentSql = await refineSqlAnswer(q, currentSql, errorDetail, realSchema, dbContext);
+            await sleep(Math.max(delayMs, 400));
+          } else {
+            submitSpinner.warn(`  [${i + 1}/${unanswered2.length}] ${chalk3.yellow(evalResult ?? "UNKNOWN")} \u2014 ${label} (gave up after ${MAX_AI_RETRIES} retries)`);
+            log("warn", `      Reason: ${chalk3.red(errorDetail)}`);
+            debug(`[SQL Q${q.question_number}] Full response:`, JSON.stringify(r, null, 2));
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          submitSpinner.fail(`  [${i + 1}/${unanswered2.length}] Submit failed: ${msg}`);
+          debugAxiosError("submitSqlAnswers", err);
+          break;
+        }
+      }
+      if (i < unanswered2.length - 1) await sleep(delayMs);
+    }
+    await sleep(delayMs);
+    const checkSpinner = ora("  Verifying submission status\u2026").start();
+    try {
+      const refreshed = await getSqlQuestions(client, unit.unit_id);
+      const missed = refreshed.questions.filter(
+        (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
       );
-      for (const r of result.submission_results) {
-        if (r.evaluation_result !== "CORRECT") {
-          const qText = unanswered2.find((q) => q.question_id === r.question_id)?.question.short_text ?? r.question_id;
-          log("warn", `  \u2717 ${qText} \u2014 ${r.coding_submission_response?.reason_for_error ?? "INCORRECT"}`);
+      if (missed.length === 0) {
+        checkSpinner.succeed(`  All SQL questions confirmed CORRECT`);
+      } else {
+        checkSpinner.warn(`  ${missed.length} question(s) still not CORRECT \u2014 resubmitting\u2026`);
+        for (const mq of missed) {
+          const cachedSql = sqlAnswers.get(mq.question_id);
+          if (!cachedSql) continue;
+          const mlabel = mq.question.short_text?.trim() || `Q${mq.question_number}`;
+          const rs = ora(`  Resubmitting: ${mlabel}\u2026`).start();
+          try {
+            const reResult = await submitWithRetry([{
+              question_id: mq.question_id,
+              time_spent: 30,
+              user_response_code: { code_content: cachedSql, language: "SQL" }
+            }]);
+            const rr = reResult.submission_results[0];
+            if (rr?.evaluation_result === "CORRECT") {
+              rs.succeed(`  Resubmit CORRECT \u2014 ${mlabel}`);
+            } else {
+              rs.warn(`  Resubmit ${rr?.evaluation_result ?? "UNKNOWN"} \u2014 ${mlabel}`);
+            }
+          } catch (err) {
+            rs.fail(`  Resubmit failed \u2014 ${mlabel}`);
+            debugAxiosError("resubmitSql", err);
+          }
+          await sleep(delayMs);
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      submitSpinner2.fail(`  SQL submit failed: ${msg}`);
+      checkSpinner.warn("  Could not verify status (non-fatal)");
+      debugAxiosError("getSqlQuestions (post-check)", err);
     }
     return;
   }
@@ -841,7 +1067,6 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
     return;
   }
   await sleep(delayMs);
-  const codingResponses = [];
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
     const summaryEntry = unanswered.find((s) => s.question_id === q.question_id);
@@ -853,7 +1078,7 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
     try {
       code = await solveCodingQuestion(q, lang);
       solveSpinner.succeed(
-        `  [${i + 1}/${questions.length}] ${chalk2.green(q.question.short_text ?? q.question_id)} (${lang})`
+        `  [${i + 1}/${questions.length}] ${chalk3.green(q.question.short_text ?? q.question_id)} (${lang})`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -861,45 +1086,97 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
       code = decodeCodeContentLocal(q.code.code_content);
     }
     const encodedCode = encodeCodeContent(code);
-    if (summaryEntry?.question_status === "NOT_ATTEMPTED") {
-      try {
-        await startCodingQuestion(client, q.question_id);
-        await saveCodingAnswer(client, q.question_id, encodedCode, lang);
-      } catch {
-      }
-      await sleep(Math.max(delayMs / 2, 300));
+    const startSpinner = ora(`  Starting question on server\u2026`).start();
+    try {
+      await startCodingQuestion(client, q.question_id);
+      startSpinner.succeed(`  Question started`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      startSpinner.warn(`  Start failed (${msg}) \u2014 attempting submit anyway`);
+      debugAxiosError("startCodingQuestion", err);
     }
-    codingResponses.push({
-      question_id: q.question_id,
-      time_spent: 30 + i * 10,
-      coding_answer: {
-        code_content: encodedCode,
-        language: lang
+    await sleep(Math.max(delayMs / 2, 200));
+    const submitSpinner = ora(`  Submitting answer\u2026`).start();
+    try {
+      const result = await submitCodingAnswers(client, [{
+        question_id: q.question_id,
+        time_spent: 30 + i * 10,
+        coding_answer: {
+          code_content: encodedCode,
+          language: lang
+        }
+      }]);
+      const r = result.submission_result[0];
+      if (r?.evaluation_result === "CORRECT") {
+        submitSpinner.succeed(
+          `  Submitted \u2014 ${chalk3.green("CORRECT")}  score: ${r.user_response_score}`
+        );
+      } else {
+        submitSpinner.warn(
+          `  Submitted \u2014 ${chalk3.yellow(r?.evaluation_result ?? "UNKNOWN")}  (${r?.passed_test_cases_count ?? 0}/${r?.total_test_cases_count ?? "?"} tests passed)`
+        );
       }
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      submitSpinner.fail(`  Submit failed: ${msg}`);
+      debugAxiosError("submitCodingAnswers", err);
+    }
     if (i < questions.length - 1) await sleep(delayMs);
   }
-  const submitSpinner = ora(`  Submitting ${codingResponses.length} coding answer(s)\u2026`).start();
+  await sleep(delayMs);
+  const codingCheckSpinner = ora("  Verifying coding submission status\u2026").start();
   try {
-    const result = await submitCodingAnswers(client, codingResponses);
-    const correct = result.submission_result.filter((r) => r.evaluation_result === "CORRECT").length;
-    const total = result.submission_result.length;
-    const totalScore = result.submission_result.reduce((a, r) => a + r.user_response_score, 0);
-    submitSpinner.succeed(
-      `  Coding submitted \u2014 ${chalk2.green(`${correct}/${total}`)} correct  score: ${totalScore}`
+    const refreshedSummary = await getCodingQuestionsSummary(client, unit.unit_id);
+    const stillWrong = refreshedSummary.filter(
+      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
     );
-    for (const r of result.submission_result) {
-      if (r.evaluation_result !== "CORRECT") {
-        const q = questions.find((q2) => q2.question_id === r.question_id);
-        log(
-          "warn",
-          `  \u2717 ${q?.question.short_text ?? r.question_id} \u2014 ${r.passed_test_cases_count ?? 0}/${r.total_test_cases_count ?? "?"} tests passed`
-        );
+    if (stillWrong.length === 0) {
+      codingCheckSpinner.succeed(`  All coding questions confirmed CORRECT`);
+    } else {
+      codingCheckSpinner.warn(`  ${stillWrong.length} question(s) still not CORRECT \u2014 resubmitting\u2026`);
+      const missedIds = stillWrong.map((q) => q.question_id);
+      let missedDetails = [];
+      try {
+        const res = await getCodingQuestions(client, missedIds);
+        missedDetails = res.questions;
+      } catch {
+        codingCheckSpinner.warn(`  Could not load missed question details \u2014 skipping resubmit`);
+      }
+      for (const mq of missedDetails) {
+        const summaryEntry = stillWrong.find((s) => s.question_id === mq.question_id);
+        const lang = pickLanguage(summaryEntry?.applicable_languages ?? [mq.code.language]);
+        const mlabel = mq.question.short_text ?? mq.question_id.slice(0, 8);
+        const rs = ora(`  Resubmitting: ${mlabel}\u2026`).start();
+        try {
+          let code;
+          try {
+            code = await solveCodingQuestion(mq, lang);
+          } catch {
+            code = decodeCodeContentLocal(mq.code.code_content);
+          }
+          await startCodingQuestion(client, mq.question_id);
+          await sleep(200);
+          const reResult = await submitCodingAnswers(client, [{
+            question_id: mq.question_id,
+            time_spent: 30,
+            coding_answer: { code_content: encodeCodeContent(code), language: lang }
+          }]);
+          const rr = reResult.submission_result[0];
+          if (rr?.evaluation_result === "CORRECT") {
+            rs.succeed(`  Resubmit CORRECT \u2014 ${mlabel}`);
+          } else {
+            rs.warn(`  Resubmit ${rr?.evaluation_result ?? "UNKNOWN"} \u2014 ${mlabel}`);
+          }
+        } catch (err) {
+          rs.fail(`  Resubmit failed \u2014 ${mlabel}`);
+          debugAxiosError("resubmitCoding", err);
+        }
+        await sleep(delayMs);
       }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    submitSpinner.fail(`  Coding submit failed: ${msg}`);
+    codingCheckSpinner.warn("  Could not verify coding status (non-fatal)");
+    debugAxiosError("getCodingQuestionsSummary (post-check)", err);
   }
 }
 function decodeCodeContentLocal(raw) {
@@ -920,8 +1197,8 @@ async function processTopic(client, topic, courseId, config) {
     return;
   }
   console.log(
-    chalk2.bold.yellow(`
-  \u25CF Topic ${topic.order}: ${topic.topic_name}`) + chalk2.gray(` [${(topic.completion_percentage ?? 0).toFixed(0)}% done]`)
+    chalk3.bold.yellow(`
+  \u25CF Topic ${topic.order}: ${topic.topic_name}`) + chalk3.gray(` [${(topic.completion_percentage ?? 0).toFixed(0)}% done]`)
   );
   let units;
   const unitSpinner = ora("  Loading units\u2026").start();
@@ -965,7 +1242,7 @@ async function processTopic(client, topic, courseId, config) {
   }
 }
 async function processCourse(client, config, courseId, courseTitle, topicLimit) {
-  console.log(chalk2.bold.bgCyan.black(`
+  console.log(chalk3.bold.bgCyan.black(`
   COURSE: ${courseTitle}  `));
   const courseSpinner = ora("Loading course structure\u2026").start();
   let courseDetails;
@@ -988,11 +1265,11 @@ async function processCourse(client, config, courseId, courseTitle, topicLimit) 
 }
 async function run(client, config) {
   console.log(
-    chalk2.bold.cyan("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
+    chalk3.bold.cyan("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
   );
-  console.log(chalk2.bold.cyan("  Starting automation\u2026"));
+  console.log(chalk3.bold.cyan("  Starting automation\u2026"));
   console.log(
-    chalk2.bold.cyan("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
+    chalk3.bold.cyan("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
   );
   for (const course of config.selectedCourses) {
     await processCourse(
@@ -1004,11 +1281,11 @@ async function run(client, config) {
     );
   }
   console.log(
-    chalk2.bold.green("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
+    chalk3.bold.green("\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
   );
-  console.log(chalk2.bold.green("  All done!"));
+  console.log(chalk3.bold.green("  All done!"));
   console.log(
-    chalk2.bold.green("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
+    chalk3.bold.green("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n")
   );
 }
 
@@ -1027,9 +1304,7 @@ async function loadCurriculum() {
     } catch {
     }
   }
-  throw new Error(
-    "curriculum.json not found. Make sure it exists in the package root."
-  );
+  throw new Error("curriculum.json not found. Make sure it exists in the package root.");
 }
 async function main() {
   let curriculum;
@@ -1037,31 +1312,42 @@ async function main() {
     curriculum = await loadCurriculum();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(chalk3.red(`
+    console.error(chalk4.red(`
   \u2716 ${msg}
 `));
     process.exit(1);
   }
-  let config;
-  try {
-    config = await runPrompts(curriculum);
-  } catch (err) {
-    if (err.code === "ERR_USE_AFTER_CLOSE" || String(err).includes("force closed")) {
-      console.log(chalk3.yellow("\n\n  Aborted.\n"));
-      process.exit(0);
+  while (true) {
+    let config;
+    try {
+      config = await runPrompts(curriculum);
+    } catch (err) {
+      if (err.code === "ERR_USE_AFTER_CLOSE" || String(err).includes("force closed")) {
+        console.log(chalk4.yellow("\n\n  Aborted.\n"));
+        process.exit(0);
+      }
+      throw err;
     }
-    throw err;
-  }
-  initGroq(config.groqKey);
-  const client = createClient(config.token);
-  try {
-    await run(client, config);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(chalk3.red(`
+    initGroq(config.groqKey);
+    const client = createClient(config.token);
+    try {
+      await run(client, config);
+      break;
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 401) {
+        console.error(chalk4.red("\n  \u2716 401 Unauthorized \u2014 token has expired or is invalid."));
+        console.log(chalk4.yellow("  Clearing saved token. Please enter a new one.\n"));
+        const cfg = await loadConfig();
+        await saveConfig({ ...cfg, token: void 0 });
+        continue;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(chalk4.red(`
   \u2716 Unexpected error: ${msg}
 `));
-    process.exit(1);
+      process.exit(1);
+    }
   }
 }
 main();

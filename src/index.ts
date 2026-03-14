@@ -6,14 +6,13 @@ import { runPrompts } from "./cli.js";
 import { createClient } from "./api.js";
 import { initGroq } from "./solver.js";
 import { run } from "./runner.js";
+import { loadConfig, saveConfig } from "./config.js";
 import type { Curriculum } from "./types.js";
 
 async function loadCurriculum(): Promise<Curriculum> {
-  // Works both from src/ during dev (tsx) and from dist/ after build (tsup)
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
 
-  // Try paths: alongside the built file, then up to project root
   const candidates = [
     join(__dirname, "curriculum.json"),
     join(__dirname, "..", "curriculum.json"),
@@ -28,9 +27,7 @@ async function loadCurriculum(): Promise<Curriculum> {
     }
   }
 
-  throw new Error(
-    "curriculum.json not found. Make sure it exists in the package root."
-  );
+  throw new Error("curriculum.json not found. Make sure it exists in the package root.");
 }
 
 async function main(): Promise<void> {
@@ -43,27 +40,41 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let config;
-  try {
-    config = await runPrompts(curriculum);
-  } catch (err: unknown) {
-    // User hit Ctrl-C during prompts
-    if ((err as NodeJS.ErrnoException).code === "ERR_USE_AFTER_CLOSE" || String(err).includes("force closed")) {
-      console.log(chalk.yellow("\n\n  Aborted.\n"));
-      process.exit(0);
+  // Retry loop — on 401, clear saved token and re-prompt
+  while (true) {
+    let config;
+    try {
+      config = await runPrompts(curriculum);
+    } catch (err: unknown) {
+      if (
+        (err as NodeJS.ErrnoException).code === "ERR_USE_AFTER_CLOSE" ||
+        String(err).includes("force closed")
+      ) {
+        console.log(chalk.yellow("\n\n  Aborted.\n"));
+        process.exit(0);
+      }
+      throw err;
     }
-    throw err;
-  }
 
-  initGroq(config.groqKey);
-  const client = createClient(config.token);
+    initGroq(config.groqKey);
+    const client = createClient(config.token);
 
-  try {
-    await run(client, config);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(chalk.red(`\n  ✖ Unexpected error: ${msg}\n`));
-    process.exit(1);
+    try {
+      await run(client, config);
+      break; // done
+    } catch (err: unknown) {
+      const status = (err as any)?.response?.status;
+      if (status === 401) {
+        console.error(chalk.red("\n  ✖ 401 Unauthorized — token has expired or is invalid."));
+        console.log(chalk.yellow("  Clearing saved token. Please enter a new one.\n"));
+        const cfg = await loadConfig();
+        await saveConfig({ ...cfg, token: undefined });
+        continue; // back to prompt
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(chalk.red(`\n  ✖ Unexpected error: ${msg}\n`));
+      process.exit(1);
+    }
   }
 }
 
