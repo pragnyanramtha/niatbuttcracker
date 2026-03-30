@@ -1,8 +1,10 @@
 import chalk from "chalk";
 import { debugAxiosError, debug } from "./logger.js";
 import ora from "ora";
-import type { AxiosInstance } from "axios";
+import type { AxiosInstance, AxiosError } from "axios";
 import type { RunConfig, Topic, Unit } from "./types.js";
+import { UNIT_TYPE, QUESTION_STATUS } from "./types.js";
+import { ConcurrencyLimiter } from "./concurrency.js";
 import {
   getCourseDetails,
   getTopicUnits,
@@ -39,7 +41,14 @@ function log(
   console.log(`${prefix[level]} ${msg}`);
 }
 
-// ── Learning Set completion ───────────────────────────────────────────────────
+// ── Question status helper ──────────────────────────────────────────────────
+
+function isQuestionAnswered(questionStatus: string): boolean {
+  return (
+    questionStatus === QUESTION_STATUS.CORRECT ||
+    questionStatus === QUESTION_STATUS.COMPLETED
+  );
+}
 
 async function handleLearningSet(
   client: AxiosInstance,
@@ -202,8 +211,8 @@ async function handleQuestionSet(
   delayMs: number,
 ): Promise<void> {
   const name =
-    (unit as any).question_set_unit_details?.name ??
-    (unit as any).learning_resource_set_unit_details?.name ??
+    unit.question_set_unit_details?.name ??
+    unit.learning_resource_set_unit_details?.name ??
     unit.unit_id;
 
   if (skipCompleted && unit.completion_percentage >= 100) {
@@ -242,7 +251,7 @@ async function handleQuestionSet(
   // ── SQL path ─────────────────────────────────────────────────────────
   if (isSql && sqlQuestions) {
     const unanswered = sqlQuestions.questions.filter(
-      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
+      (q) => !isQuestionAnswered(q.question_status),
     );
 
     if (unanswered.length === 0) {
@@ -292,7 +301,7 @@ async function handleQuestionSet(
         try {
           return await submitSqlAnswers(client, payload);
         } catch (err: unknown) {
-          const status = (err as any)?.response?.status;
+          const status = (err as AxiosError)?.response?.status;
           if (status && status < 500) throw err; // 4xx = our fault, don't retry
           lastErr = err;
           const wait = 1000 * 2 ** n; // 1s, 2s, 4s
@@ -368,7 +377,7 @@ async function handleQuestionSet(
     try {
       const refreshed = await getSqlQuestions(client, unit.unit_id);
       const missed = refreshed.questions.filter(
-        (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
+        (q) => !isQuestionAnswered(q.question_status),
       );
       if (missed.length === 0) {
         checkSpinner.succeed(`  All SQL questions confirmed CORRECT`);
@@ -422,7 +431,7 @@ async function handleQuestionSet(
   await sleep(delayMs);
 
   // Filter already-correct questions
-  const unanswered = summary.filter((q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED");
+  const unanswered = summary.filter((q) => !isQuestionAnswered(q.question_status));
   if (unanswered.length === 0) {
     log("skip", "  All coding questions already correct");
     return;
@@ -517,7 +526,7 @@ async function handleQuestionSet(
   try {
     const refreshedSummary = await getCodingQuestionsSummary(client, unit.unit_id);
     const stillWrong = refreshedSummary.filter(
-      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED",
+      (q) => !isQuestionAnswered(q.question_status),
     );
     if (stillWrong.length === 0) {
       codingCheckSpinner.succeed(`  All coding questions confirmed CORRECT`);
@@ -534,7 +543,7 @@ async function handleQuestionSet(
       }
       for (const mq of missedDetails) {
         const summaryEntry = stillWrong.find((s) => s.question_id === mq.question_id);
-        const lang = pickLanguage(summaryEntry?.applicable_languages ?? [mq.code.language as any]);
+        const lang = pickLanguage(summaryEntry?.applicable_languages ?? [mq.code.language]);
         const mlabel = mq.question.short_text ?? mq.question_id.slice(0, 8);
         const rs = ora(`  Resubmitting: ${mlabel}…`).start();
         try {
@@ -577,6 +586,48 @@ function decodeCodeContentLocal(raw: string): string {
   }
 }
 
+// ── Unit grouping helper (single-pass) ──────────────────────────────────────
+
+interface GroupedUnits {
+  learning: Unit[];
+  practice: Unit[];
+  question: Unit[];
+}
+
+/**
+ * Group units by type in a single pass (O(n) instead of O(3n)).
+ * Only includes units matching the current mode.
+ */
+function groupUnitsByType(units: Unit[], mode: string): GroupedUnits {
+  const grouped: GroupedUnits = { learning: [], practice: [], question: [] };
+
+  for (const unit of units) {
+    // Learning sets
+    if (
+      unit.unit_type === UNIT_TYPE.LEARNING_SET &&
+      (mode === "learning_sets" || mode === "all")
+    ) {
+      grouped.learning.push(unit);
+    }
+    // Practice sets
+    else if (
+      unit.unit_type === UNIT_TYPE.PRACTICE &&
+      (mode === "practice" || mode === "all")
+    ) {
+      grouped.practice.push(unit);
+    }
+    // Question sets
+    else if (
+      unit.unit_type === UNIT_TYPE.QUESTION_SET &&
+      (mode === "question_sets" || mode === "all")
+    ) {
+      grouped.question.push(unit);
+    }
+  }
+
+  return grouped;
+}
+
 // ── Topic runner ──────────────────────────────────────────────────────────────
 
 async function processTopic(
@@ -614,48 +665,43 @@ async function processTopic(
 
   await sleep(config.delayMs);
 
-  for (const unit of units) {
-    const doLearning =
-      unit.unit_type === "LEARNING_SET" &&
-      (config.mode === "learning_sets" || config.mode === "all");
+  // Group units by type in a single pass (O(n) instead of O(3n))
+  const { learning: learningUnits, practice: practiceUnits, question: questionUnits } = groupUnitsByType(units, config.mode);
 
-    const doPractice =
-      unit.unit_type === "PRACTICE" &&
-      (config.mode === "practice" || config.mode === "all");
+  // Process learning units with high concurrency (8 at a time)
+  // Learning sets are quick and isolated, can be safely parallelized
+  if (learningUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(8);
+    await limiter.runAll(
+      learningUnits.map(
+        (unit) => () =>
+          handleLearningSet(client, unit, config.skipCompleted, config.delayMs),
+      ),
+    );
+  }
 
-    const doQuestionSet =
-      unit.unit_type === "QUESTION_SET" &&
-      (config.mode === "question_sets" || config.mode === "all");
+  // Process practice units with moderate concurrency (3 at a time)
+  // Practice exams need more time per unit; limit to prevent overwhelming the API
+  if (practiceUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(3);
+    await limiter.runAll(
+      practiceUnits.map(
+        (unit) => () =>
+          handlePracticeSet(client, unit, config.skipCompleted, config.delayMs),
+      ),
+    );
+  }
 
-    if (doLearning) {
-      await handleLearningSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs,
-      );
-    } else if (doPractice) {
-      await handlePracticeSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs,
-      );
-    } else if (doQuestionSet) {
-      await handleQuestionSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs,
-      );
-    } else if (
-      unit.unit_type !== "QUIZ" &&
-      unit.unit_type !== "ASSESSMENT" &&
-      unit.unit_type !== "QUESTION_SET" &&
-      unit.unit_type !== "PROJECT"
-    ) {
-      // Unknown unit type - just log it
-    }
+  // Process question units with lower concurrency (2 at a time)
+  // Coding/SQL questions are computationally expensive and require more API calls
+  if (questionUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(2);
+    await limiter.runAll(
+      questionUnits.map(
+        (unit) => () =>
+          handleQuestionSet(client, unit, config.skipCompleted, config.delayMs),
+      ),
+    );
   }
 }
 

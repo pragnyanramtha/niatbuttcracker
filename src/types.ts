@@ -60,6 +60,22 @@ export type UnitType =
   | "PROJECT"
   | string;
 
+// Unit type constants to avoid stringly-typed code
+export const UNIT_TYPE = {
+  LEARNING_SET: "LEARNING_SET",
+  PRACTICE: "PRACTICE",
+  QUIZ: "QUIZ",
+  ASSESSMENT: "ASSESSMENT",
+  QUESTION_SET: "QUESTION_SET",
+  PROJECT: "PROJECT",
+} as const;
+
+// Question status constants
+export const QUESTION_STATUS = {
+  CORRECT: "CORRECT",
+  COMPLETED: "COMPLETED",
+} as const;
+
 export interface LearningSetDetails {
   name: string;
   content_type: string;
@@ -79,6 +95,10 @@ export interface AssessmentUnitDetails {
   name: string;
 }
 
+export interface QuestionSetUnitDetails {
+  name: string;
+}
+
 export interface Unit {
   unit_id: string;
   unit_type: UnitType;
@@ -90,6 +110,7 @@ export interface Unit {
   practice_unit_details: PracticeUnitDetails | null;
   quiz_unit_details: QuizUnitDetails | null;
   assessment_unit_details: AssessmentUnitDetails | null;
+  question_set_unit_details: QuestionSetUnitDetails | null;
 }
 
 export interface TopicUnitsResponse {

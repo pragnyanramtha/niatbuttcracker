@@ -843,6 +843,57 @@ ${cleaned.slice(0, 300)}...`);
 // src/runner.ts
 import chalk3 from "chalk";
 import ora from "ora";
+
+// src/types.ts
+var UNIT_TYPE = {
+  LEARNING_SET: "LEARNING_SET",
+  PRACTICE: "PRACTICE",
+  QUIZ: "QUIZ",
+  ASSESSMENT: "ASSESSMENT",
+  QUESTION_SET: "QUESTION_SET",
+  PROJECT: "PROJECT"
+};
+var QUESTION_STATUS = {
+  CORRECT: "CORRECT",
+  COMPLETED: "COMPLETED"
+};
+
+// src/concurrency.ts
+var ConcurrencyLimiter = class {
+  maxConcurrent;
+  activeCount = 0;
+  queue = [];
+  constructor(maxConcurrent) {
+    this.maxConcurrent = Math.max(1, maxConcurrent);
+  }
+  /**
+   * Execute a function with concurrency control.
+   * Waits if max concurrent limit is reached.
+   */
+  async run(fn) {
+    while (this.activeCount >= this.maxConcurrent) {
+      await new Promise((resolve) => this.queue.push(resolve));
+    }
+    this.activeCount++;
+    try {
+      return await fn();
+    } finally {
+      this.activeCount--;
+      const resolver = this.queue.shift();
+      if (resolver) resolver();
+    }
+  }
+  /**
+   * Execute an array of async functions with concurrency control.
+   * Returns results in the same order as input.
+   * Uses Promise.allSettled to continue even if some tasks fail.
+   */
+  async runAll(fns) {
+    return Promise.allSettled(fns.map((fn) => this.run(fn)));
+  }
+};
+
+// src/runner.ts
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function log(level, msg) {
   const prefix = {
@@ -853,6 +904,9 @@ function log(level, msg) {
     err: chalk3.red("  \u2716 ")
   };
   console.log(`${prefix[level]} ${msg}`);
+}
+function isQuestionAnswered(questionStatus) {
+  return questionStatus === QUESTION_STATUS.CORRECT || questionStatus === QUESTION_STATUS.COMPLETED;
 }
 async function handleLearningSet(client, unit, skipCompleted, delayMs) {
   const name = unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
@@ -1001,7 +1055,7 @@ async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
   await sleep(delayMs);
   if (isSql && sqlQuestions) {
     const unanswered2 = sqlQuestions.questions.filter(
-      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
+      (q) => !isQuestionAnswered(q.question_status)
     );
     if (unanswered2.length === 0) {
       log("skip", "  All SQL questions already correct");
@@ -1100,7 +1154,7 @@ ${errorDetail}`);
     try {
       const refreshed = await getSqlQuestions(client, unit.unit_id);
       const missed = refreshed.questions.filter(
-        (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
+        (q) => !isQuestionAnswered(q.question_status)
       );
       if (missed.length === 0) {
         checkSpinner.succeed(`  All SQL questions confirmed CORRECT`);
@@ -1147,7 +1201,7 @@ ${errorDetail}`);
     return;
   }
   await sleep(delayMs);
-  const unanswered = summary.filter((q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED");
+  const unanswered = summary.filter((q) => !isQuestionAnswered(q.question_status));
   if (unanswered.length === 0) {
     log("skip", "  All coding questions already correct");
     return;
@@ -1225,7 +1279,7 @@ ${errorDetail}`);
   try {
     const refreshedSummary = await getCodingQuestionsSummary(client, unit.unit_id);
     const stillWrong = refreshedSummary.filter(
-      (q) => q.question_status !== "CORRECT" && q.question_status !== "COMPLETED"
+      (q) => !isQuestionAnswered(q.question_status)
     );
     if (stillWrong.length === 0) {
       codingCheckSpinner.succeed(`  All coding questions confirmed CORRECT`);
@@ -1284,6 +1338,19 @@ function decodeCodeContentLocal(raw) {
     return raw;
   }
 }
+function groupUnitsByType(units, mode) {
+  const grouped = { learning: [], practice: [], question: [] };
+  for (const unit of units) {
+    if (unit.unit_type === UNIT_TYPE.LEARNING_SET && (mode === "learning_sets" || mode === "all")) {
+      grouped.learning.push(unit);
+    } else if (unit.unit_type === UNIT_TYPE.PRACTICE && (mode === "practice" || mode === "all")) {
+      grouped.practice.push(unit);
+    } else if (unit.unit_type === UNIT_TYPE.QUESTION_SET && (mode === "question_sets" || mode === "all")) {
+      grouped.question.push(unit);
+    }
+  }
+  return grouped;
+}
 async function processTopic(client, topic, courseId, config) {
   if (topic.is_topic_locked) {
     log("warn", `Topic "${topic.topic_name}" is locked \u2014 skipping`);
@@ -1309,33 +1376,30 @@ async function processTopic(client, topic, courseId, config) {
     return;
   }
   await sleep(config.delayMs);
-  for (const unit of units) {
-    const doLearning = unit.unit_type === "LEARNING_SET" && (config.mode === "learning_sets" || config.mode === "all");
-    const doPractice = unit.unit_type === "PRACTICE" && (config.mode === "practice" || config.mode === "all");
-    const doQuestionSet = unit.unit_type === "QUESTION_SET" && (config.mode === "question_sets" || config.mode === "all");
-    if (doLearning) {
-      await handleLearningSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs
-      );
-    } else if (doPractice) {
-      await handlePracticeSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs
-      );
-    } else if (doQuestionSet) {
-      await handleQuestionSet(
-        client,
-        unit,
-        config.skipCompleted,
-        config.delayMs
-      );
-    } else if (unit.unit_type !== "QUIZ" && unit.unit_type !== "ASSESSMENT" && unit.unit_type !== "QUESTION_SET" && unit.unit_type !== "PROJECT") {
-    }
+  const { learning: learningUnits, practice: practiceUnits, question: questionUnits } = groupUnitsByType(units, config.mode);
+  if (learningUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(8);
+    await limiter.runAll(
+      learningUnits.map(
+        (unit) => () => handleLearningSet(client, unit, config.skipCompleted, config.delayMs)
+      )
+    );
+  }
+  if (practiceUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(3);
+    await limiter.runAll(
+      practiceUnits.map(
+        (unit) => () => handlePracticeSet(client, unit, config.skipCompleted, config.delayMs)
+      )
+    );
+  }
+  if (questionUnits.length > 0) {
+    const limiter = new ConcurrencyLimiter(2);
+    await limiter.runAll(
+      questionUnits.map(
+        (unit) => () => handleQuestionSet(client, unit, config.skipCompleted, config.delayMs)
+      )
+    );
   }
 }
 async function processCourse(client, config, courseId, courseTitle, topicLimit) {
