@@ -9,6 +9,7 @@ import type {
   SelectedCourse,
   RunConfig,
   CompletionMode,
+  AIProvider,
 } from "./types.js";
 import { loadConfig, saveConfig } from "./config.js";
 
@@ -55,7 +56,38 @@ async function captureAuthToken(): Promise<string> {
   }
 }
 
-// ── Groq API key ──────────────────────────────────────────────────────────────
+// ── AI Provider selection ─────────────────────────────────────────────────────
+
+async function selectAIProvider(): Promise<"puter" | "groq"> {
+  const cfg = await loadConfig();
+
+  // If already saved, use that
+  if (cfg.aiProvider) {
+    console.log(chalk.gray(`Using saved AI provider: ${chalk.cyan(cfg.aiProvider)}\n`));
+    return cfg.aiProvider;
+  }
+
+  console.log(chalk.bold.yellow("── AI Provider Selection ───────────────────────\n"));
+
+  const provider = await select<"puter" | "groq">({
+    message: "Choose your AI provider:",
+    choices: [
+      {
+        name: `${chalk.green("Puter.js")} ${chalk.dim("(Recommended)")} — Convenient, keep login, free Gemini models`,
+        value: "puter" as const,
+      },
+      {
+        name: `${chalk.blue("Groq API")} — Fast inference, requires API key from console.groq.com`,
+        value: "groq" as const,
+      },
+    ],
+  });
+
+  await saveConfig({ ...cfg, aiProvider: provider });
+  return provider;
+}
+
+// ── Groq API key instructions & collection ────────────────────────────────────
 
 async function getGroqKey(): Promise<string> {
   const cfg = await loadConfig();
@@ -65,17 +97,24 @@ async function getGroqKey(): Promise<string> {
     return cfg.groqKey;
   }
 
-  console.log(chalk.bold.yellow("── Groq API Key ────────────────────────────────\n"));
+  console.log(chalk.bold.yellow("── Groq API Key Setup ──────────────────────────\n"));
+  console.log(chalk.gray("  You'll need to get an API key from Groq Console.\n"));
+  console.log(chalk.bold("  Steps to get your API key:"));
+  console.log(chalk.gray("    1. Ctrl+Click this link to open in your browser:"));
+  console.log(chalk.cyan("       https://console.groq.com/keys\n"));
+  console.log(chalk.gray("    2. Sign in or create a Groq account"));
+  console.log(chalk.gray("    3. Click 'Create API Key'"));
+  console.log(chalk.gray("    4. Copy the API key (starts with 'gsk_')"));
+  console.log(chalk.gray("    5. Paste it below\n"));
 
   const groqKey = (await password({
-    message: "Groq API key (get at console.groq.com):",
+    message: "Paste your Groq API key:",
     mask: "•",
     validate: (v) => (v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'),
   })).trim();
 
   await saveConfig({ ...cfg, groqKey });
   console.log(chalk.green("Groq API key saved.\n"));
-
   return groqKey;
 }
 
@@ -214,8 +253,16 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
   // Auto-capture auth token from browser (no prompts)
   const token = await captureAuthToken();
 
-  // Get Groq API key (prompts only if not saved)
-  const groqKey = await getGroqKey();
+  // Select AI provider (Puter.js or Groq)
+  const aiProvider = await selectAIProvider();
+
+  // Get API key only if Groq is selected
+  let groqKey: string | undefined;
+  if (aiProvider === "groq") {
+    groqKey = await getGroqKey();
+  } else {
+    console.log(chalk.gray("Using Puter.js — no API key needed.\n"));
+  }
 
   const semester = await selectSemester(curriculum);
   const courses = await selectCourses(semester);
@@ -238,6 +285,7 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
 
   const config: RunConfig = {
     token,
+    aiProvider,
     groqKey,
     selectedCourses,
     mode,
@@ -245,7 +293,7 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
     delayMs,
   };
 
-  printSummary({ selectedCourses, mode, skipCompleted, delayMs });
+  printSummary({ aiProvider, selectedCourses, mode, skipCompleted, delayMs });
 
   // Single Enter to start — no y/n confirm
   await input({ message: chalk.green("Press Enter to start automation…"), default: "" });

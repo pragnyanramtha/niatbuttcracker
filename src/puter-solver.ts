@@ -1,6 +1,4 @@
-import Groq from "groq-sdk";
-import axios from "axios";
-import { debug, IS_DEBUG } from "./logger.js";
+import { debug } from "./logger.js";
 import type {
   Question,
   QuestionOption,
@@ -9,84 +7,96 @@ import type {
   CodingLanguage,
 } from "./types.js";
 
-let groqClient: Groq | null = null;
+import puter from "@heyputer/puter.js";
 
-export function initGroq(apiKey: string): void {
-  groqClient = new Groq({ apiKey });
-}
+let puterInitialized = false;
 
-// ── Model List ────────────────────────────────────────────────────────────────
+export async function initPuter(): Promise<void> {
+  if (puterInitialized) return;
 
-const MODELS = [
-  "openai/gpt-oss-120b",
-  "moonshotai/kimi-k2-instruct",
-  "llama-3.3-70b-versatile",
-];
-
-// ── Per-model rate-limit cooldown ─────────────────────────────────────────────
-// Maps model id → the ms timestamp at which it was rate-limited.
-// A model stays in cooldown for RATE_LIMIT_COOLDOWN_MS after a 429.
-
-const RATE_LIMIT_COOLDOWN_MS = 60_000;
-const modelRateLimitedAt = new Map<string, number>();
-
-function markRateLimited(model: string): void {
-  modelRateLimitedAt.set(model, Date.now());
-  const readyAt = new Date(
-    Date.now() + RATE_LIMIT_COOLDOWN_MS,
-  ).toLocaleTimeString();
-  console.warn(`[solver] "${model}" rate-limited — skipping until ${readyAt}`);
-}
-
-function isRateLimitError(err: unknown): boolean {
-  if (err && typeof err === "object") {
-    const status = (err as { status?: number }).status;
-    if (status === 429) return true;
-    const msg = (err as { message?: string }).message ?? "";
-    if (/rate.?limit|429|too many requests/i.test(msg)) return true;
+  // In Node.js CLI, Puter browser auth flow (window/screen popup) is unavailable.
+  // The AI APIs still work for this project without invoking auth.signIn().
+  try {
+    await puter.ai.chat([{ role: "user", content: "OK" }], {
+      model: PUTER_MODELS[0],
+      max_tokens: 8,
+      temperature: 0,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Puter initialization failed in Node mode: ${msg}. Switch provider to Groq or retry later.`,
+    );
   }
-  return false;
+
+  puterInitialized = true;
+  debug("[Puter] Initialized (Node mode, no popup auth)");
 }
 
-/**
- * Returns the models to try for a single request:
- *   1. Non-rate-limited models first, in their original MODELS order.
- *   2. If ALL models are currently rate-limited, fall back to all of them
- *      sorted by soonest cooldown expiry — so we always have something to
- *      try and never crash with "no models available".
- *
- * Expired cooldowns are cleaned up automatically.
- */
-function getModelOrder(): string[] {
-  const now = Date.now();
-  const fresh: string[] = [];
-  const limited: Array<{ model: string; readyAt: number }> = [];
+function extractText(value: unknown): string {
+  if (typeof value === "string") return value;
 
-  for (const model of MODELS) {
-    const at = modelRateLimitedAt.get(model);
-    if (at === undefined || now - at >= RATE_LIMIT_COOLDOWN_MS) {
-      if (at !== undefined) modelRateLimitedAt.delete(model); // expired — clean up
-      fresh.push(model);
-    } else {
-      limited.push({ model, readyAt: at + RATE_LIMIT_COOLDOWN_MS });
+  if (Array.isArray(value)) {
+    return value.map((part) => extractText(part)).join("\n").trim();
+  }
+
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+
+    const text = obj.text;
+    if (typeof text === "string") return text;
+
+    const content = obj.content;
+    if (content !== undefined) return extractText(content);
+
+    const message = obj.message;
+    if (message !== undefined) return extractText(message);
+  }
+
+  return "";
+}
+
+function getChatText(response: unknown): string {
+  const direct = extractText(response);
+  if (direct) return direct;
+
+  if (response && typeof response === "object") {
+    const obj = response as Record<string, unknown>;
+    const choices = obj.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      const first = choices[0] as Record<string, unknown>;
+      const choiceText = extractText(first.message ?? first);
+      if (choiceText) return choiceText;
     }
   }
 
-  if (fresh.length > 0) return fresh;
-
-  // All rate-limited — cycle through sorted by soonest recovery
-  console.warn(`[solver] All models are rate-limited. Cycling through anyway…`);
-  limited.sort((a, b) => a.readyAt - b.readyAt);
-  return limited.map((l) => l.model);
+  return String(response ?? "");
 }
 
-// ── MCQ Prompt Builder ────────────────────────────────────────────────────────
+function buildMessages(systemPrompt: string, userPrompt: string): Array<{ role: string; content: string }> {
+  return [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+}
 
-/**
- * Build a prompt that uses A/B/C/D labels (LLMs are trained on this format)
- * and explicitly asks the model to reason before committing to an answer.
- * Returns both the prompt string and the letter→option_id mapping.
- */
+// ── Model selection ───────────────────────────────────────────────────────────
+
+const PUTER_MODELS = [
+  "gemini-3.1-flash-lite",
+  "gemini-3.1-flash-lite-preview",
+];
+
+let currentModelIndex = 0;
+
+function getNextModel(): string {
+  const model = PUTER_MODELS[currentModelIndex % PUTER_MODELS.length]!;
+  currentModelIndex++;
+  return model;
+}
+
+// ── MCQ Prompt Builder (same as Groq solver) ─────────────────────────────────
+
 function buildPrompt(question: Question): {
   prompt: string;
   letterToId: Map<string, string>;
@@ -131,23 +141,14 @@ function buildPrompt(question: Question): {
   return { prompt: parts.join("\n"), letterToId };
 }
 
-/**
- * Parse the model's response to find the chosen option_id.
- * Priority:
- *   1. "Answer: X" line anywhere in the response (handles <think> blocks too)
- *   2. Standalone letter on the last non-empty line
- *   3. UUID scan (legacy fallback)
- *   4. First option (last-resort fallback)
- */
 function pickBestOptionId(
   responseText: string,
   options: QuestionOption[],
   letterToId: Map<string, string>,
 ): string {
-  // Strip <think>...</think> reasoning blocks emitted by some models
   const cleaned = responseText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
-  // 1. Look for "Answer: X" (case-insensitive, anywhere)
+  // 1. Look for "Answer: X"
   const answerLineMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
   if (answerLineMatch) {
     const letter = answerLineMatch[1]!.toUpperCase();
@@ -155,7 +156,7 @@ function pickBestOptionId(
     if (id) return id;
   }
 
-  // 2. Check the last few non-empty lines for a bare letter
+  // 2. Check last few lines for bare letter
   const lines = cleaned
     .split("\n")
     .map((l) => l.trim())
@@ -168,7 +169,6 @@ function pickBestOptionId(
       const id = letterToId.get(letter);
       if (id) return id;
     }
-    // "The answer is B" / "Option C" / "Choose D" patterns
     const inlineMatch = line.match(
       /\b(?:answer(?:\s+is)?|option|choose|select)[:\s]+([A-H])\b/i,
     );
@@ -179,7 +179,7 @@ function pickBestOptionId(
     }
   }
 
-  // 3. UUID scan (handles models that ignored the letter format)
+  // 3. UUID scan
   const uuidPattern =
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
   const uuidMatches = responseText.match(uuidPattern) ?? [];
@@ -192,53 +192,49 @@ function pickBestOptionId(
     }
   }
 
-  // 4. Last resort
   return options[0]!.option_id;
 }
 
 // ── Single Question Solver ────────────────────────────────────────────────────
 
 export async function solveQuestion(question: Question): Promise<string> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!puterInitialized) {
+    throw new Error("Puter not initialized. Call initPuter() first.");
+  }
 
   const { prompt, letterToId } = buildPrompt(question);
   let lastError: unknown;
 
-  for (const model of getModelOrder()) {
+  // Try both models
+  for (let attempt = 0; attempt < PUTER_MODELS.length; attempt++) {
+    const model = getNextModel();
+
     try {
-      const completion = await groqClient.chat.completions.create({
+      debug(`[Puter] Trying model: ${model}`);
+
+      const response = await puter.ai.chat(buildMessages(
+        "You are an expert tutor and problem-solver with deep knowledge across computer science, " +
+          "mathematics, science, languages, and general academia. " +
+          "When given a multiple-choice question, reason through it carefully before answering. " +
+          "Always end your response with 'Answer: X' where X is the letter of the correct option.",
+        prompt,
+      ), {
         model,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert tutor and problem-solver with deep knowledge across computer science, " +
-              "mathematics, science, languages, and general academia. " +
-              "When given a multiple-choice question, reason through it carefully before answering. " +
-              "Always end your response with 'Answer: X' where X is the letter of the correct option.",
-          },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 1024,
-        temperature: 0,
       });
 
-      const raw = completion.choices[0]?.message?.content?.trim() ?? "";
-      return pickBestOptionId(raw, question.options, letterToId);
+      const responseText = getChatText(response);
+      debug(`[Puter] Response from ${model}: ${responseText.slice(0, 200)}...`);
+      return pickBestOptionId(responseText, question.options, letterToId);
     } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] Model "${model}" failed — trying next…`);
-      }
+      console.warn(`[puter-solver] Model "${model}" failed — trying next…`);
       lastError = err;
+      debug(`[Puter] Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new Error("All Groq models failed for MCQ.");
+    : new Error("All Puter models failed for MCQ.");
 }
 
 // ── Batch Solver ──────────────────────────────────────────────────────────────
@@ -252,12 +248,10 @@ export async function solveAll(
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i]!;
 
-    // Only handle MCQ variants — skip types that require writing code
     if (
       q.question_type !== "MULTIPLE_CHOICE" &&
       q.question_type !== "CODE_ANALYSIS_MULTIPLE_CHOICE"
     ) {
-      // Fallback: pick first option rather than leaving blank
       answers.set(q.question_id, q.options[0]?.option_id ?? "");
       onProgress?.(i + 1, questions.length);
       continue;
@@ -267,13 +261,11 @@ export async function solveAll(
       const optionId = await solveQuestion(q);
       answers.set(q.question_id, optionId);
     } catch {
-      // On total failure, pick first option as safe fallback
       answers.set(q.question_id, q.options[0]?.option_id ?? "");
     }
 
     onProgress?.(i + 1, questions.length);
 
-    // Small delay to avoid hitting rate limits
     if (i < questions.length - 1) {
       await new Promise((r) => setTimeout(r, 300));
     }
@@ -283,47 +275,6 @@ export async function solveAll(
 }
 
 // ── SQL Solver ────────────────────────────────────────────────────────────────
-
-// ── DB Schema Fetcher ─────────────────────────────────────────────────────────
-
-/**
- * Downloads the SQLite DB from db_url and returns a human-readable schema
- * string like: "TABLE products (id INTEGER, name TEXT, price REAL, ...)"
- * This gives the AI the REAL table/column names instead of guessing.
- */
-export async function fetchDbSchema(dbUrl: string): Promise<string> {
-  if (!dbUrl) return "";
-  try {
-    const res = await axios.get<ArrayBuffer>(dbUrl, { responseType: "arraybuffer", timeout: 10000 });
-    const buf = Buffer.from(res.data);
-
-    // Lazy-load sql.js to avoid startup cost
-    const initSqlJs = (await import("sql.js")).default;
-    const SQL = await initSqlJs();
-    const db = new SQL.Database(buf);
-
-    // Get all user tables
-    const tables: string[] = db
-      .exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .flatMap((r) => r.values.map((v) => String(v[0])));
-
-    if (tables.length === 0) return "";
-
-    const schemaParts: string[] = [];
-    for (const table of tables) {
-      const cols = db
-        .exec(`PRAGMA table_info(${table})`)
-        .flatMap((r) => r.values.map((v) => `${v[1]} ${v[2]}`));  // name + type
-      schemaParts.push(`TABLE ${table} (${cols.join(", ")})`);
-    }
-
-    db.close();
-    return schemaParts.join("\n");
-  } catch (err) {
-    debug("[fetchDbSchema] Failed to fetch/parse DB:", err instanceof Error ? err.message : err);
-    return "";
-  }
-}
 
 function buildSqlPrompt(questions: SqlQuestion[], dbContext: string, realSchema: string): string {
   const description = dbContext
@@ -372,13 +323,13 @@ export async function solveSqlQuestions(
   realSchema: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<string, string>> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!puterInitialized) {
+    throw new Error("Puter not initialized. Call initPuter() first.");
+  }
 
   const answers = new Map<string, string>();
-  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none — using description context)"}`);
+  debug(`[SQL Solver Puter] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none)"}`);
 
-  // Solve in batches of 10 to stay within token limits
   const BATCH = 10;
   let done = 0;
 
@@ -386,64 +337,46 @@ export async function solveSqlQuestions(
     const batch = questions.slice(i, i + BATCH);
     const prompt = buildSqlPrompt(batch, dbContext, realSchema);
 
-    debug(`[SQL Solver] Prompt for batch ${Math.floor(i / BATCH) + 1}:\n${prompt}`);
-
     let parsed: Record<string, string> = {};
     let lastError: unknown;
 
-    for (const model of getModelOrder()) {
+    for (let attempt = 0; attempt < PUTER_MODELS.length; attempt++) {
+      const model = getNextModel();
+
       try {
-        const completion = await groqClient.chat.completions.create({
+        const response = await puter.ai.chat(buildMessages(
+          "You are an expert SQL developer. Respond only with the requested JSON object. No markdown, no commentary.",
+          prompt,
+        ), {
           model,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an expert SQL developer. Respond only with the requested JSON object. No markdown, no commentary.",
-            },
-            { role: "user", content: prompt },
-          ],
-          max_tokens: 2048,
-          temperature: 0,
         });
 
-        const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
-        debug(`[SQL Solver] Raw AI response (${model}):\n${raw}`);
-        // Strip <think> blocks from reasoning models
-        const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-        // Strip markdown code fences if present
+        const responseText = getChatText(response);
+        debug(`[SQL Solver Puter] Raw response (${model}):\n${responseText}`);
+        const noThink = responseText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
         const cleaned = noThink
           .replace(/^```[a-z]*\n?/i, "")
           .replace(/\n?```$/i, "")
           .trim();
         parsed = JSON.parse(cleaned);
-        debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
+        debug(`[SQL Solver Puter] Parsed ${Object.keys(parsed).length} answers`);
         break;
       } catch (err) {
-        if (isRateLimitError(err)) {
-          markRateLimited(model);
-        } else {
-          console.warn(`[solver] SQL model "${model}" failed — trying next…`);
-        }
+        console.warn(`[puter-solver] SQL model "${model}" failed — trying next…`);
         lastError = err;
       }
     }
 
-    // If batch parse failed, fall back to solving each individually
+    // Fallback: solve individually
     if (Object.keys(parsed).length === 0 && lastError) {
       for (const q of batch) {
         const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
         const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\n${realSchema ? `Schema:\n${realSchema}` : `Database:\n${dbContext}`}\n${starter ? `Starter SQL:\n${starter}\n` : ""}\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+
         try {
-          const [lastModel] = getModelOrder().slice(-1);
-          const completion = await groqClient.chat.completions.create({
-            model: lastModel ?? MODELS[MODELS.length - 1]!,
-            messages: [{ role: "user", content: fallbackPrompt }],
-            max_tokens: 512,
-            temperature: 0,
-          });
-          const sql =
-            completion.choices[0]?.message?.content?.trim() ?? "SELECT 1;";
+          const model = getNextModel();
+          const response = await puter.ai.chat([{ role: "user", content: fallbackPrompt }], { model });
+          const sql = getChatText(response).trim();
           parsed[q.question_id] = sql
             .replace(/<think>[\s\S]*?<\/think>/gi, "")
             .replace(/^```sql\n?/i, "")
@@ -469,10 +402,6 @@ export async function solveSqlQuestions(
   return answers;
 }
 
-/**
- * Given a failed SQL and the exact error message from the server,
- * ask the AI to fix it. Returns corrected SQL or original if all models fail.
- */
 export async function refineSqlAnswer(
   question: SqlQuestion,
   failedSql: string,
@@ -480,7 +409,9 @@ export async function refineSqlAnswer(
   realSchema: string,
   dbContext: string,
 ): Promise<string> {
-  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!puterInitialized) {
+    throw new Error("Puter not initialized. Call initPuter() first.");
+  }
 
   const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
   const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
@@ -499,34 +430,32 @@ export async function refineSqlAnswer(
     "Write the CORRECTED SQL. Respond with ONLY the SQL, no explanation, no markdown.",
   ].filter(Boolean).join("\n");
 
-  debug(`[SQL Refine] Retry prompt:\n${prompt}`);
+  debug(`[SQL Refine Puter] Retry prompt:\n${prompt}`);
 
-  for (const model of MODELS) {
+  for (let attempt = 0; attempt < PUTER_MODELS.length; attempt++) {
+    const model = getNextModel();
+
     try {
-      const completion = await groqClient.chat.completions.create({
+      const response = await puter.ai.chat(buildMessages(
+        "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL.",
+        prompt,
+      ), {
         model,
-        messages: [
-          { role: "system", content: "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL." },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 512,
-        temperature: 0,
       });
-      const raw = completion.choices[0]?.message?.content?.trim() ?? failedSql;
-      const fixed = raw.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
-      debug(`[SQL Refine] Fixed SQL (${model}):\n${fixed}`);
+
+      const fixed = getChatText(response).replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+      debug(`[SQL Refine Puter] Fixed SQL (${model}):\n${fixed}`);
       return fixed;
     } catch {
       // try next model
     }
   }
 
-  return failedSql; // all models failed, return original
+  return failedSql;
 }
 
 // ── Coding Solver ─────────────────────────────────────────────────────────────
 
-/** Pick the best language from the available ones (prefer Python, then Node.js, then C++, then Java) */
 export function pickLanguage(applicable: CodingLanguage[]): CodingLanguage {
   const preference: CodingLanguage[] = ["PYTHON", "NODE_JS", "CPP", "JAVA"];
   for (const lang of preference) {
@@ -535,7 +464,6 @@ export function pickLanguage(applicable: CodingLanguage[]): CodingLanguage {
   return applicable[0] ?? "PYTHON";
 }
 
-/** Extract the raw code string from the API's double-encoded code_content */
 export function decodeCodeContent(raw: string): string {
   try {
     const parsed = JSON.parse(raw);
@@ -546,7 +474,6 @@ export function decodeCodeContent(raw: string): string {
   }
 }
 
-/** Re-encode code for submission: code_content must be JSON.stringify(code) */
 export function encodeCodeContent(code: string): string {
   return JSON.stringify(code);
 }
@@ -614,20 +541,20 @@ export async function solveCodingQuestion(
   q: CodingQuestionDetail,
   lang: CodingLanguage,
 ): Promise<string> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
+  if (!puterInitialized) {
+    throw new Error("Puter not initialized. Call initPuter() first.");
+  }
 
   const defaultTemplate = decodeCodeContent(q.code.code_content);
   const savedTemplate = q.latest_saved_code
     ? decodeCodeContent(q.latest_saved_code.code_content)
     : null;
-  // If the user has started on a solution (more than +20 chars over base template), use it
   const template = (savedTemplate && savedTemplate.length > defaultTemplate.length + 20)
     ? savedTemplate
     : defaultTemplate;
 
   const prompt = buildCodingPrompt(q, lang, template);
-  debug(`[Coding] Prompt for "${q.question.short_text}":\n${prompt}`);
+  debug(`[Coding Puter] Prompt for "${q.question.short_text}":\n${prompt}`);
 
   const systemMessage = lang === "CPP"
     ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation."
@@ -635,39 +562,32 @@ export async function solveCodingQuestion(
 
   let lastError: unknown;
 
-  for (const model of getModelOrder()) {
+  for (let attempt = 0; attempt < PUTER_MODELS.length; attempt++) {
+    const model = getNextModel();
+
     try {
-      const completion = await groqClient.chat.completions.create({
+      const response = await puter.ai.chat(buildMessages(systemMessage, prompt), {
         model,
-        messages: [
-          { role: "system", content: systemMessage },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 2048,
-        temperature: 0,
       });
 
-      const raw = completion.choices[0]?.message?.content?.trim() ?? template;
-      // Strip <think> blocks and markdown fences despite instructions
-      const cleaned = raw
+      const cleaned = getChatText(response)
         .replace(/<think>[\s\S]*?<\/think>/gi, "")
         .replace(/^```[a-z]*\n?/i, "")
         .replace(/\n?```$/i, "")
         .trim();
 
-      debug(`[Coding] Response (${model}):\n${cleaned.slice(0, 300)}...`);
+      debug(`[Coding Puter] Response (${model}):\n${cleaned.slice(0, 300)}...`);
       return cleaned;
     } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] Coding model "${model}" failed — trying next…`);
-      }
+      console.warn(`[puter-solver] Coding model "${model}" failed — trying next…`);
       lastError = err;
     }
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new Error("All Groq models failed for coding question.");
+    : new Error("All Puter models failed for coding question.");
 }
+
+// Re-export fetchDbSchema from groq solver (shared utility)
+export { fetchDbSchema } from "./solver.js";

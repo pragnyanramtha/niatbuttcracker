@@ -21,7 +21,7 @@ import {
   startCodingQuestion,
   saveCodingAnswer,
 } from "./api.js";
-import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent, fetchDbSchema, refineSqlAnswer } from "./solver.js";
+import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent, fetchDbSchema, refineSqlAnswer } from "./solver-interface.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

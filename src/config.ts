@@ -16,6 +16,7 @@ const SESSION_PATH = join(CACHE_DIR, "ccbp-session.json");
 const GROQ_SESSION_PATH = join(CACHE_DIR, "groq-session.json");
 
 export interface UserConfig {
+  aiProvider?: "puter" | "groq";
   groqKey?: string;
   // Note: token removed - we now use browser session for auth
 }
@@ -46,6 +47,10 @@ export function getConfigPath(): string {
 
 export function getSessionPath(): string {
   return SESSION_PATH;
+}
+
+export function getGroqSessionPath(): string {
+  return GROQ_SESSION_PATH;
 }
 
 export function getCacheDirectory(): string {

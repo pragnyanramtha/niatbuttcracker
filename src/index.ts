@@ -5,6 +5,8 @@ import chalk from "chalk";
 import { runPrompts } from "./cli.js";
 import { createClient } from "./api.js";
 import { initGroq } from "./solver.js";
+import { initPuter } from "./puter-solver.js";
+import { setAIProvider } from "./solver-interface.js";
 import { run } from "./runner.js";
 import { clearSession } from "./browser-auth.js";
 import type { Curriculum } from "./types.js";
@@ -59,7 +61,21 @@ async function main(): Promise<void> {
       throw err;
     }
 
-    initGroq(config.groqKey);
+    // Initialize the selected AI provider
+    setAIProvider(config.aiProvider);
+
+    if (config.aiProvider === "groq") {
+      if (!config.groqKey) {
+        console.error(chalk.red("\n  ✖ Groq API key is required when using Groq provider.\n"));
+        process.exit(1);
+      }
+      initGroq(config.groqKey);
+      console.log(chalk.gray("Initialized Groq AI provider.\n"));
+    } else {
+      await initPuter();
+      console.log(chalk.gray("Initialized Puter.js AI provider.\n"));
+    }
+
     const client = createClient(config.token);
 
     try {
