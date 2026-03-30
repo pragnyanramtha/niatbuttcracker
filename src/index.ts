@@ -6,7 +6,7 @@ import { runPrompts } from "./cli.js";
 import { createClient } from "./api.js";
 import { initGroq } from "./solver.js";
 import { run } from "./runner.js";
-import { loadConfig, saveConfig } from "./config.js";
+import { clearSession } from "./browser-auth.js";
 import type { Curriculum } from "./types.js";
 
 async function loadCurriculum(): Promise<Curriculum> {
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Retry loop — on 401, clear saved token and re-prompt
+  // Retry loop — on 401, clear browser session and re-prompt
   while (true) {
     let config;
     try {
@@ -68,10 +68,9 @@ async function main(): Promise<void> {
     } catch (err: unknown) {
       const status = (err as any)?.response?.status;
       if (status === 401) {
-        console.error(chalk.red("\n  ✖ 401 Unauthorized — token has expired or is invalid."));
-        console.log(chalk.yellow("  Clearing saved token. Please enter a new one.\n"));
-        const cfg = await loadConfig();
-        await saveConfig({ ...cfg, token: undefined });
+        console.error(chalk.red("\n  ✖ 401 Unauthorized — session expired."));
+        console.log(chalk.yellow("  Clearing session. Please login again.\n"));
+        clearSession();
         continue; // back to prompt
       }
       const msg = err instanceof Error ? err.message : String(err);

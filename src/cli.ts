@@ -1,5 +1,7 @@
 import { input, password, checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
+import ora from "ora";
+import { captureTokenFromBrowser } from "./browser-auth.js";
 import type {
   Curriculum,
   CurriculumSemester,
@@ -33,62 +35,54 @@ function banner(): void {
   console.log(chalk.gray("  NIAT BUTT CRACKER — use Space to select, A for all\n"));
 }
 
-// ── Credential prompts ────────────────────────────────────────────────────────
+// ── Authentication (automatic browser capture) ────────────────────────────────
 
-async function promptCredentials(): Promise<{ token: string; groqKey: string }> {
-  console.log(chalk.bold.yellow("── Credentials ─────────────────────────────────\n"));
+async function captureAuthToken(): Promise<string> {
+  console.log(chalk.bold.yellow("── Authentication ──────────────────────────────\n"));
+  console.log(chalk.gray("  Opening browser for login..."));
+  console.log(chalk.gray("  (If already logged in, this will be instant)\n"));
 
+  const spinner = ora("Capturing auth token...").start();
+
+  const result = await captureTokenFromBrowser();
+
+  if (result.success && result.token) {
+    spinner.succeed("Logged in successfully!");
+    return result.token;
+  } else {
+    spinner.fail(`Login failed: ${result.error}`);
+    throw new Error(result.error || "Failed to capture auth token");
+  }
+}
+
+// ── Groq API key ──────────────────────────────────────────────────────────────
+
+async function getGroqKey(): Promise<string> {
   const cfg = await loadConfig();
 
-  // ── Token: reuse saved or ask for new ─────────────────────────────────────
-  let token = "";
-  if (cfg.token && cfg.token.length > 10) {
-    const masked = cfg.token.slice(0, 6) + "••••••••••••••••" + cfg.token.slice(-4);
-    const reuse = await select<"reuse" | "new">({
-      message: `Saved bearer token (${masked}):`,
-      choices: [
-        { name: "Use saved token", value: "reuse" },
-        { name: "Enter a new token", value: "new" },
-      ],
-    });
-    if (reuse === "reuse") {
-      token = cfg.token;
-      console.log(chalk.gray("Using saved token."));
-    }
-  }
-
-  if (!token) {
-    token = (await password({
-      message: "Bearer token (from browser DevTools / Network tab):",
-      mask: "•",
-      validate: (v) => (v.trim().length > 10 ? true : "Token looks too short"),
-    })).trim();
-    await saveConfig({ ...cfg, token });
-    console.log(chalk.gray("Token saved for next run."));
-  }
-
-  // ── Groq key: reuse saved or ask for new ──────────────────────────────────
-  let groqKey = "";
   if (cfg.groqKey && cfg.groqKey.startsWith("gsk_")) {
-    groqKey = cfg.groqKey;
-    console.log(chalk.gray("Loaded Groq API key from config."));
-  } else {
-    groqKey = (await password({
-      message: "Groq API key (for AI question solving — get at console.groq.com):",
-      mask: "•",
-      validate: (v) => (v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'),
-    })).trim();
-    await saveConfig({ ...cfg, groqKey });
-    console.log(chalk.green("Groq API key saved for future runs."));
+    console.log(chalk.gray("Loaded Groq API key from config.\n"));
+    return cfg.groqKey;
   }
 
-  return { token, groqKey };
+  console.log(chalk.bold.yellow("── Groq API Key ────────────────────────────────\n"));
+
+  const groqKey = (await password({
+    message: "Groq API key (get at console.groq.com):",
+    mask: "•",
+    validate: (v) => (v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'),
+  })).trim();
+
+  await saveConfig({ ...cfg, groqKey });
+  console.log(chalk.green("Groq API key saved.\n"));
+
+  return groqKey;
 }
 
 // ── Semester / course selection ───────────────────────────────────────────────
 
 async function selectSemester(curriculum: Curriculum): Promise<CurriculumSemester> {
-  console.log(chalk.bold.yellow("\n── Semester Selection ───────────────────────────\n"));
+  console.log(chalk.bold.yellow("── Semester Selection ───────────────────────────\n"));
 
   const choices = curriculum.curriculum_details.flatMap((year) =>
     year.semester_details.map((sem) => ({
@@ -188,7 +182,6 @@ async function selectMode(): Promise<CompletionMode> {
   if (!hasLearning && !hasPractice && hasQuestions) return "question_sets";
 
   // Mixed subset — use "all" and let runner filter naturally
-  // (runner already skips based on mode, so extra selections are harmless)
   return "all";
 }
 
@@ -218,7 +211,12 @@ function printSummary(config: Omit<RunConfig, "token" | "groqKey">): void {
 export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
   banner();
 
-  const { token, groqKey } = await promptCredentials();
+  // Auto-capture auth token from browser (no prompts)
+  const token = await captureAuthToken();
+
+  // Get Groq API key (prompts only if not saved)
+  const groqKey = await getGroqKey();
+
   const semester = await selectSemester(curriculum);
   const courses = await selectCourses(semester);
 
