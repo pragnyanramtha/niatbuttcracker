@@ -307,12 +307,9 @@ export interface SqlSubmitResponse {
 
 export type CompletionMode = "learning_sets" | "practice" | "question_sets" | "all";
 
-export type AIProvider = "puter" | "groq";
-
 export interface RunConfig {
   token: string;
-  aiProvider: AIProvider;
-  groqKey?: string; // optional now, only needed if provider is "groq"
+  cerebrasKey: string;
   selectedCourses: SelectedCourse[];
   mode: CompletionMode;
   skipCompleted: boolean;
