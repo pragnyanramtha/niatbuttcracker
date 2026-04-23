@@ -24,6 +24,8 @@ import {
 import { solveAll, solveSqlQuestions, solveCodingQuestion, pickLanguage, encodeCodeContent, fetchDbSchema, refineSqlAnswer } from "./solver-interface.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const PRACTICE_RETRY_THRESHOLD_PERCENT = 75;
+const MAX_PRACTICE_SCORE_ATTEMPTS = 3;
 
 // ── Logging helpers ───────────────────────────────────────────────────────────
 
@@ -105,101 +107,132 @@ async function handlePracticeSet(
 
   console.log(chalk.bold(`\n  ▸ Practice: ${chalk.cyan(name)}`));
 
-  // Step 1: Create exam attempt
-  let examAttemptId: string;
-  const attemptSpinner = ora("  Creating exam attempt…").start();
-  try {
-    const attempt = await createExamAttempt(client, unit.unit_id);
-    examAttemptId = attempt.exam_attempt_id;
-    attemptSpinner.succeed(`  Exam attempt: ${chalk.dim(examAttemptId)}`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    attemptSpinner.fail(`  Failed to create attempt: ${msg}`);
+  for (let attemptNumber = 1; attemptNumber <= MAX_PRACTICE_SCORE_ATTEMPTS; attemptNumber++) {
+    const retryLabel =
+      attemptNumber > 1
+        ? chalk.dim(` (score retry ${attemptNumber}/${MAX_PRACTICE_SCORE_ATTEMPTS})`)
+        : "";
+
+    // Step 1: Create exam attempt
+    let examAttemptId: string;
+    const attemptSpinner = ora(`  Creating exam attempt${retryLabel}…`).start();
+    try {
+      const attempt = await createExamAttempt(client, unit.unit_id);
+      examAttemptId = attempt.exam_attempt_id;
+      attemptSpinner.succeed(`  Exam attempt: ${chalk.dim(examAttemptId)}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      attemptSpinner.fail(`  Failed to create attempt: ${msg}`);
+      return;
+    }
+
+    await sleep(delayMs);
+
+    // Step 2: Fetch questions
+    const qSpinner = ora("  Fetching questions…").start();
+    let questions;
+    try {
+      const res = await getExamQuestions(client, examAttemptId);
+      questions = res.questions;
+      qSpinner.succeed(`  Got ${questions.length} question(s)`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      qSpinner.fail(`  Failed to fetch questions: ${msg}`);
+      await endExamAttempt(client, examAttemptId).catch(() => {});
+      return;
+    }
+
+    await sleep(delayMs);
+
+    // Step 3: Solve with AI
+    const solveSpinner = ora(
+      `  Solving ${questions.length} question(s) with AI…`,
+    ).start();
+    let answers: Map<string, string>;
+    try {
+      answers = await solveAll(questions, (done, total) => {
+        solveSpinner.text = `  Solving questions with AI… ${done}/${total}`;
+      });
+      solveSpinner.succeed(`  Solved ${answers.size} question(s)`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      solveSpinner.fail(`  AI solving failed: ${msg}`);
+      await endExamAttempt(client, examAttemptId).catch(() => {});
+      return;
+    }
+
+    // Step 4: Submit all answers at once
+    const submitSpinner = ora("  Submitting answers…").start();
+    const responses = questions
+      .filter((q) => answers.has(q.question_id) && answers.get(q.question_id))
+      .map((q, i) => ({
+        question_id: q.question_id,
+        question_number: q.question_number,
+        time_spent: 10 + i * 3, // Simulate realistic time spent
+        multiple_choice_answer_id: answers.get(q.question_id)!,
+      }));
+
+    let scorePercent: number | null = null;
+    try {
+      const totalTime = responses.reduce((a, r) => a + r.time_spent, 0) + 30;
+      const submitResult = await submitAnswers(
+        client,
+        examAttemptId,
+        responses,
+        totalTime,
+      );
+      const { correct_answer_count, total_questions_count } =
+        submitResult.questions_stats;
+      const score = submitResult.current_total_score;
+      scorePercent =
+        total_questions_count > 0
+          ? (correct_answer_count / total_questions_count) * 100
+          : 0;
+      submitSpinner.succeed(
+        `  Submitted — ${chalk.green(`${correct_answer_count}/${total_questions_count}`)} correct (${scorePercent.toFixed(0)}%)  score: ${score}`,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      submitSpinner.fail(`  Submit failed: ${msg}`);
+      debugAxiosError("submitAnswers (practice)", err);
+    }
+
+    await sleep(delayMs);
+
+    // Step 5: End attempt
+    const endSpinner = ora("  Ending attempt…").start();
+    try {
+      await endExamAttempt(client, examAttemptId);
+      endSpinner.succeed("  Attempt ended");
+    } catch {
+      endSpinner.warn("  Could not cleanly end attempt (non-fatal)");
+    }
+
+    await sleep(delayMs);
+
+    if (scorePercent === null) return;
+
+    if (
+      scorePercent < PRACTICE_RETRY_THRESHOLD_PERCENT &&
+      attemptNumber < MAX_PRACTICE_SCORE_ATTEMPTS
+    ) {
+      log(
+        "warn",
+        `Practice score ${scorePercent.toFixed(0)}% is below ${PRACTICE_RETRY_THRESHOLD_PERCENT}% — retrying exam`,
+      );
+      await sleep(Math.max(delayMs, 1000));
+      continue;
+    }
+
+    if (scorePercent < PRACTICE_RETRY_THRESHOLD_PERCENT) {
+      log(
+        "warn",
+        `Practice score stayed below ${PRACTICE_RETRY_THRESHOLD_PERCENT}% after ${MAX_PRACTICE_SCORE_ATTEMPTS} attempt(s)`,
+      );
+    }
+
     return;
   }
-
-  await sleep(delayMs);
-
-  // Step 2: Fetch questions
-  const qSpinner = ora("  Fetching questions…").start();
-  let questions;
-  try {
-    const res = await getExamQuestions(client, examAttemptId);
-    questions = res.questions;
-    qSpinner.succeed(`  Got ${questions.length} question(s)`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    qSpinner.fail(`  Failed to fetch questions: ${msg}`);
-    await endExamAttempt(client, examAttemptId).catch(() => {});
-    return;
-  }
-
-  await sleep(delayMs);
-
-  // Step 3: Solve with Groq
-  const solveSpinner = ora(
-    `  Solving ${questions.length} question(s) with AI…`,
-  ).start();
-  let answers: Map<string, string>;
-  try {
-    answers = await solveAll(questions, (done, total) => {
-      solveSpinner.text = `  Solving questions with AI… ${done}/${total}`;
-    });
-    solveSpinner.succeed(`  Solved ${answers.size} question(s)`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    solveSpinner.fail(`  AI solving failed: ${msg}`);
-    await endExamAttempt(client, examAttemptId).catch(() => {});
-    return;
-  }
-
-  // Step 4: Submit all answers at once
-  const submitSpinner = ora("  Submitting answers…").start();
-  const responses = questions
-    .filter((q) => answers.has(q.question_id) && answers.get(q.question_id))
-    .map((q, i) => ({
-      question_id: q.question_id,
-      question_number: q.question_number,
-      time_spent: 10 + i * 3, // Simulate realistic time spent
-      multiple_choice_answer_id: answers.get(q.question_id)!,
-    }));
-
-  let submitResult;
-  try {
-    const totalTime = responses.reduce((a, r) => a + r.time_spent, 0) + 30;
-    submitResult = await submitAnswers(
-      client,
-      examAttemptId,
-      responses,
-      totalTime,
-    );
-    const { correct_answer_count, total_questions_count } =
-      submitResult.questions_stats;
-    const score = submitResult.current_total_score;
-    const pct = ((correct_answer_count / total_questions_count) * 100).toFixed(
-      0,
-    );
-    submitSpinner.succeed(
-      `  Submitted — ${chalk.green(`${correct_answer_count}/${total_questions_count}`)} correct (${pct}%)  score: ${score}`,
-    );
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    submitSpinner.fail(`  Submit failed: ${msg}`);
-    debugAxiosError("submitAnswers (practice)", err);
-  }
-
-  await sleep(delayMs);
-
-  // Step 5: End attempt
-  const endSpinner = ora("  Ending attempt…").start();
-  try {
-    await endExamAttempt(client, examAttemptId);
-    endSpinner.succeed("  Attempt ended");
-  } catch {
-    endSpinner.warn("  Could not cleanly end attempt (non-fatal)");
-  }
-
-  await sleep(delayMs);
 }
 
 // ── Question Set flow ─────────────────────────────────────────────────────────
