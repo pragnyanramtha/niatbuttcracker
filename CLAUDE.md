@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-**niatbuttcracker** is a CLI tool that automates CCBP/NXT learning platform completions using AI-powered Q&A solving. It allows users to complete learning sets, practice exams, and coding/SQL question sets automatically using the Groq API for intelligent question solving.
+**niatbuttcracker** is a CLI tool that automates CCBP/NXT learning platform completions using AI-powered Q&A solving. It allows users to complete learning sets, practice exams, and coding/SQL question sets automatically using the Cerebras API for intelligent question solving.
 
 ## Development Commands
 
@@ -29,7 +29,7 @@ src/
 ├── cli.ts            # Interactive prompts for semester/course/mode selection
 ├── api.ts            # CCBP API wrapper (handles double-encoded JSON envelopes)
 ├── runner.ts         # Orchestrates course → topic → unit iteration and processing
-├── solver.ts         # Groq-powered AI solver with model rotation & rate-limiting
+├── solver.ts         # Cerebras-powered AI solver with model rotation & rate-limiting
 ├── types.ts          # All TypeScript interfaces for API responses/requests
 ├── config.ts         # Config persistence (~/.niat-auto-config.json)
 └── logger.ts         # Debug logging utilities
@@ -40,7 +40,7 @@ src/
 The tool operates in these phases:
 
 ### 1. **Credential & Selection (cli.ts)**
-   - Loads saved token and Groq API key; prompts for new ones if missing
+   - Loads saved token and Cerebras API key; prompts for new ones if missing
    - User selects semester → course(s) → topic count limit
    - User selects completion mode: "learning_sets" | "practice" | "question_sets" | "all"
    - Displays summary; user confirms to start
@@ -67,19 +67,19 @@ The tool operates in these phases:
    **Practice Sets** (MCQ exams with AI solving):
    - Skip if locked or already 100% complete
    - Create exam attempt → fetch questions
-   - Use Groq to solve all questions at once
+   - Use Cerebras to solve all questions at once
    - Submit all responses with timing data
    - End attempt
 
    **Question Sets** (SQL/Coding with test case validation):
    - Fetch question summaries → get detailed questions
-   - For **Coding**: Use Groq to generate code, save it, execute with test cases, submit
+   - For **Coding**: Use Cerebras to generate code, save it, execute with test cases, submit
    - For **SQL**: Similar flow but includes database schema fetching & SQL-specific endpoints
 
 ### 5. **AI Solving (solver.ts)**
 
    **Model Rotation & Rate-Limiting:**
-   - Maintains a pool of 4 Groq-compatible models
+   - Maintains two primary Cerebras models plus a fallback model
    - Tracks per-model rate-limit cooldowns (60s after a 429 error)
    - Always tries non-rate-limited models first
    - If all models are rate-limited, cycles through them sorted by soonest recovery
@@ -91,7 +91,7 @@ The tool operates in these phases:
    - Extracts the chosen letter from response → maps back to option_id
 
    **Coding/SQL Solving:**
-   - Generates solution code/SQL using Groq
+   - Generates solution code/SQL using Cerebras
    - Submits via appropriate endpoint
    - Polls for async evaluation results (for C++/Java/Python)
    - Or immediately gets synchronous results (for Node.js)
@@ -104,9 +104,9 @@ The tool operates in these phases:
 | **cli.ts** | Interactive prompts; uses @inquirer/prompts for checkboxes/selects; persists credentials |
 | **api.ts** | Thin wrapper over CCBP endpoints; handles payload encoding; returns typed responses |
 | **runner.ts** | Unit iteration; chooses handler (learning/practice/question) based on unit_type & mode |
-| **solver.ts** | Groq API client; model rotation; prompt building; rate-limit handling |
+| **solver.ts** | Cerebras API client; model rotation; prompt building; rate-limit handling |
 | **types.ts** | ~10 coherent groups of interfaces matching CCBP API shape |
-| **config.ts** | Reads/writes ~/.niat-auto-config.json (token + groqKey) |
+| **config.ts** | Reads/writes ~/.niat-auto-config.json (provider + cerebrasKey) |
 | **logger.ts** | debug() helper for verbose output (if DEBUG=1) |
 
 ## Curriculum Data
@@ -118,9 +118,9 @@ The tool operates in these phases:
 
 ## Configuration & Credentials
 
-- Bearer token and Groq API key are saved to `~/.niat-auto-config.json` after first prompt
+- Browser session and Cerebras API key are saved after first prompt
 - On 401 (unauthorized), the token is cleared and the user is re-prompted
-- Groq key validation checks for "gsk_" prefix
+- Cerebras key validation checks for a non-empty key
 - Token reuse is masked in prompts (first 6 + last 4 chars visible)
 
 ## Debugging
@@ -132,7 +132,7 @@ DEBUG=1 npm run dev
 
 This logs:
 - API request/response details
-- Groq solver reasoning
+- Cerebras solver reasoning
 - Unit processing steps
 - Model rate-limit state
 
@@ -141,7 +141,7 @@ This logs:
 - **@inquirer/prompts** — Interactive CLI prompts
 - **axios** — HTTP client for CCBP API
 - **chalk** — Terminal colors
-- **groq-sdk** — Groq API client
+- **@cerebras/cerebras_cloud_sdk** — Cerebras API client
 - **ora** — Spinner animations
 - **sql.js** — In-memory SQL execution (for SQL question handling)
 
@@ -158,4 +158,4 @@ This logs:
 2. **Unit Type Filtering:** Runners check `unit.unit_type` to determine handler (not all unit types are handled yet)
 3. **Completion Modes:** "all" is a catch-all; specific modes skip irrelevant units in the runner
 4. **Error Handling:** API errors logged but don't crash the runner; next unit is processed
-5. **Rate Limiting:** Hard-coded 100ms delay after each unit; Groq rate-limits handled by model rotation
+5. **Rate Limiting:** Hard-coded 100ms delay after each unit; Cerebras rate-limits handled by model rotation
