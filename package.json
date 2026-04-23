@@ -1,6 +1,6 @@
 {
   "name": "niatbuttcracker",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Automate CCBP / NXT learning platform completions with AI-powered Q&A solving. Auto-login via browser.",
   "keywords": [
     "ccbp",
