@@ -1,4 +1,4 @@
-import Groq from "groq-sdk";
+import Cerebras from "@cerebras/cerebras_cloud_sdk";
 import axios from "axios";
 import { debug, IS_DEBUG } from "./logger.js";
 import type {
@@ -9,19 +9,32 @@ import type {
   CodingLanguage,
 } from "./types.js";
 
-let groqClient: Groq | null = null;
+type ChatMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string };
 
-export function initGroq(apiKey: string): void {
-  groqClient = new Groq({ apiKey });
+type ChatCompletionRequest = {
+  messages: ChatMessage[];
+  maxCompletionTokens: number;
+  temperature?: number;
+  topP?: number;
+};
+
+let cerebrasClient: Cerebras | null = null;
+
+export function initCerebras(apiKey: string): void {
+  cerebrasClient = new Cerebras({ apiKey });
 }
 
 // ── Model List ────────────────────────────────────────────────────────────────
 
-const MODELS = [
-  "openai/gpt-oss-120b",
-  "moonshotai/kimi-k2-instruct",
-  "llama-3.3-70b-versatile",
+const PRIMARY_MODELS = [
+  "gpt-oss-120b",
+  "qwen-3-235b-a22b-instruct-2507",
 ];
+const FALLBACK_MODEL = "llama3.1-8b";
+const MODELS = [...PRIMARY_MODELS, FALLBACK_MODEL];
 
 // ── Per-model rate-limit cooldown ─────────────────────────────────────────────
 // Maps model id → the ms timestamp at which it was rate-limited.
@@ -49,35 +62,113 @@ function isRateLimitError(err: unknown): boolean {
 }
 
 /**
- * Returns the models to try for a single request:
- *   1. Non-rate-limited models first, in their original MODELS order.
- *   2. If ALL models are currently rate-limited, fall back to all of them
- *      sorted by soonest cooldown expiry — so we always have something to
- *      try and never crash with "no models available".
- *
- * Expired cooldowns are cleaned up automatically.
+ * Pick the next model for a request. Cerebras primary models are tried first.
+ * If both primary models are rate-limited, fall back to llama3.1-8b.
  */
-function getModelOrder(): string[] {
-  const now = Date.now();
-  const fresh: string[] = [];
-  const limited: Array<{ model: string; readyAt: number }> = [];
+function isModelRateLimited(model: string, now = Date.now()): boolean {
+  const at = modelRateLimitedAt.get(model);
+  if (at === undefined) return false;
+  if (now - at >= RATE_LIMIT_COOLDOWN_MS) {
+    modelRateLimitedAt.delete(model);
+    return false;
+  }
+  return true;
+}
 
-  for (const model of MODELS) {
-    const at = modelRateLimitedAt.get(model);
-    if (at === undefined || now - at >= RATE_LIMIT_COOLDOWN_MS) {
-      if (at !== undefined) modelRateLimitedAt.delete(model); // expired — clean up
-      fresh.push(model);
-    } else {
-      limited.push({ model, readyAt: at + RATE_LIMIT_COOLDOWN_MS });
+function getReadyAt(model: string): number {
+  return (modelRateLimitedAt.get(model) ?? 0) + RATE_LIMIT_COOLDOWN_MS;
+}
+
+function getNextModelForAttempt(attempted: Set<string>): string | null {
+  const now = Date.now();
+
+  for (const model of PRIMARY_MODELS) {
+    if (!attempted.has(model) && !isModelRateLimited(model, now)) {
+      return model;
     }
   }
 
-  if (fresh.length > 0) return fresh;
+  const primaryRateLimited = PRIMARY_MODELS.every((model) =>
+    isModelRateLimited(model, now),
+  );
 
-  // All rate-limited — cycle through sorted by soonest recovery
-  console.warn(`[solver] All models are rate-limited. Cycling through anyway…`);
-  limited.sort((a, b) => a.readyAt - b.readyAt);
-  return limited.map((l) => l.model);
+  if (primaryRateLimited && !attempted.has(FALLBACK_MODEL)) {
+    console.warn(
+      `[solver] Primary Cerebras models are rate-limited. Falling back to "${FALLBACK_MODEL}".`,
+    );
+    return FALLBACK_MODEL;
+  }
+
+  const allModelsRateLimited = MODELS.every((model) =>
+    isModelRateLimited(model, now),
+  );
+  const limited = allModelsRateLimited
+    ? MODELS
+        .filter((model) => !attempted.has(model) && isModelRateLimited(model, now))
+        .sort((a, b) => getReadyAt(a) - getReadyAt(b))
+    : [];
+
+  if (limited.length > 0) {
+    console.warn("[solver] All Cerebras models are rate-limited. Cycling through anyway...");
+    return limited[0]!;
+  }
+
+  return null;
+}
+
+function requireCerebrasClient(): Cerebras {
+  if (!cerebrasClient) {
+    throw new Error("Cerebras not initialised. Call initCerebras() first.");
+  }
+  return cerebrasClient;
+}
+
+async function createChatCompletion(
+  model: string,
+  request: ChatCompletionRequest,
+): Promise<string> {
+  const completion = await requireCerebrasClient().chat.completions.create({
+    model,
+    messages: request.messages,
+    max_completion_tokens: request.maxCompletionTokens,
+    temperature: request.temperature ?? 0,
+    top_p: request.topP ?? 1,
+    stream: false,
+  });
+  const response = completion as {
+    choices?: Array<{ message?: { content?: string | null } }>;
+  };
+
+  return response.choices?.[0]?.message?.content?.trim() ?? "";
+}
+
+async function withCerebrasModelRotation<T>(
+  label: string,
+  operation: (model: string) => Promise<T>,
+): Promise<T> {
+  const attempted = new Set<string>();
+  let lastError: unknown;
+
+  while (true) {
+    const model = getNextModelForAttempt(attempted);
+    if (!model) break;
+    attempted.add(model);
+
+    try {
+      return await operation(model);
+    } catch (err) {
+      if (isRateLimitError(err)) {
+        markRateLimited(model);
+      } else {
+        console.warn(`[solver] ${label} model "${model}" failed - trying next...`);
+      }
+      lastError = err;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`All Cerebras models failed for ${label}.`);
 }
 
 // ── MCQ Prompt Builder ────────────────────────────────────────────────────────
@@ -199,16 +290,10 @@ function pickBestOptionId(
 // ── Single Question Solver ────────────────────────────────────────────────────
 
 export async function solveQuestion(question: Question): Promise<string> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
-
   const { prompt, letterToId } = buildPrompt(question);
-  let lastError: unknown;
 
-  for (const model of getModelOrder()) {
-    try {
-      const completion = await groqClient.chat.completions.create({
-        model,
+  const raw = await withCerebrasModelRotation("MCQ", (model) =>
+    createChatCompletion(model, {
         messages: [
           {
             role: "system",
@@ -220,25 +305,12 @@ export async function solveQuestion(question: Question): Promise<string> {
           },
           { role: "user", content: prompt },
         ],
-        max_tokens: 1024,
+        maxCompletionTokens: 1024,
         temperature: 0,
-      });
+      }),
+  );
 
-      const raw = completion.choices[0]?.message?.content?.trim() ?? "";
-      return pickBestOptionId(raw, question.options, letterToId);
-    } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] Model "${model}" failed — trying next…`);
-      }
-      lastError = err;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("All Groq models failed for MCQ.");
+  return pickBestOptionId(raw, question.options, letterToId);
 }
 
 // ── Batch Solver ──────────────────────────────────────────────────────────────
@@ -372,9 +444,6 @@ export async function solveSqlQuestions(
   realSchema: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<string, string>> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
-
   const answers = new Map<string, string>();
   debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none — using description context)"}`);
 
@@ -389,12 +458,11 @@ export async function solveSqlQuestions(
     debug(`[SQL Solver] Prompt for batch ${Math.floor(i / BATCH) + 1}:\n${prompt}`);
 
     let parsed: Record<string, string> = {};
-    let lastError: unknown;
+    let parseFailed = false;
 
-    for (const model of getModelOrder()) {
-      try {
-        const completion = await groqClient.chat.completions.create({
-          model,
+    try {
+      parsed = await withCerebrasModelRotation("SQL", async (model) => {
+        const raw = await createChatCompletion(model, {
           messages: [
             {
               role: "system",
@@ -403,11 +471,10 @@ export async function solveSqlQuestions(
             },
             { role: "user", content: prompt },
           ],
-          max_tokens: 2048,
+          maxCompletionTokens: 2048,
           temperature: 0,
         });
 
-        const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
         debug(`[SQL Solver] Raw AI response (${model}):\n${raw}`);
         // Strip <think> blocks from reasoning models
         const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
@@ -416,34 +483,27 @@ export async function solveSqlQuestions(
           .replace(/^```[a-z]*\n?/i, "")
           .replace(/\n?```$/i, "")
           .trim();
-        parsed = JSON.parse(cleaned);
-        debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
-        break;
-      } catch (err) {
-        if (isRateLimitError(err)) {
-          markRateLimited(model);
-        } else {
-          console.warn(`[solver] SQL model "${model}" failed — trying next…`);
-        }
-        lastError = err;
-      }
+        const parsedBatch = JSON.parse(cleaned) as Record<string, string>;
+        debug(`[SQL Solver] Parsed ${Object.keys(parsedBatch).length} answers`);
+        return parsedBatch;
+      });
+    } catch {
+      parseFailed = true;
     }
 
     // If batch parse failed, fall back to solving each individually
-    if (Object.keys(parsed).length === 0 && lastError) {
+    if (Object.keys(parsed).length === 0 && parseFailed) {
       for (const q of batch) {
         const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
         const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\n${realSchema ? `Schema:\n${realSchema}` : `Database:\n${dbContext}`}\n${starter ? `Starter SQL:\n${starter}\n` : ""}\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
         try {
-          const [lastModel] = getModelOrder().slice(-1);
-          const completion = await groqClient.chat.completions.create({
-            model: lastModel ?? MODELS[MODELS.length - 1]!,
+          const sql = await withCerebrasModelRotation("SQL fallback", (model) =>
+            createChatCompletion(model, {
             messages: [{ role: "user", content: fallbackPrompt }],
-            max_tokens: 512,
+            maxCompletionTokens: 512,
             temperature: 0,
-          });
-          const sql =
-            completion.choices[0]?.message?.content?.trim() ?? "SELECT 1;";
+            }),
+          );
           parsed[q.question_id] = sql
             .replace(/<think>[\s\S]*?<\/think>/gi, "")
             .replace(/^```sql\n?/i, "")
@@ -480,8 +540,6 @@ export async function refineSqlAnswer(
   realSchema: string,
   dbContext: string,
 ): Promise<string> {
-  if (!groqClient) throw new Error("Groq not initialised. Call initGroq() first.");
-
   const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
   const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
 
@@ -501,27 +559,23 @@ export async function refineSqlAnswer(
 
   debug(`[SQL Refine] Retry prompt:\n${prompt}`);
 
-  for (const model of MODELS) {
-    try {
-      const completion = await groqClient.chat.completions.create({
-        model,
+  try {
+    const raw = await withCerebrasModelRotation("SQL refine", (model) =>
+      createChatCompletion(model, {
         messages: [
           { role: "system", content: "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL." },
           { role: "user", content: prompt },
         ],
-        max_tokens: 512,
+        maxCompletionTokens: 512,
         temperature: 0,
-      });
-      const raw = completion.choices[0]?.message?.content?.trim() ?? failedSql;
-      const fixed = raw.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
-      debug(`[SQL Refine] Fixed SQL (${model}):\n${fixed}`);
-      return fixed;
-    } catch {
-      // try next model
-    }
+      }),
+    );
+    const fixed = raw.replace(/^```sql\n?/i, "").replace(/\n?```$/i, "").trim();
+    debug(`[SQL Refine] Fixed SQL:\n${fixed}`);
+    return fixed;
+  } catch {
+    return failedSql;
   }
-
-  return failedSql; // all models failed, return original
 }
 
 // ── Coding Solver ─────────────────────────────────────────────────────────────
@@ -614,9 +668,6 @@ export async function solveCodingQuestion(
   q: CodingQuestionDetail,
   lang: CodingLanguage,
 ): Promise<string> {
-  if (!groqClient)
-    throw new Error("Groq not initialised. Call initGroq() first.");
-
   const defaultTemplate = decodeCodeContent(q.code.code_content);
   const savedTemplate = q.latest_saved_code
     ? decodeCodeContent(q.latest_saved_code.code_content)
@@ -633,41 +684,24 @@ export async function solveCodingQuestion(
     ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation."
     : "You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.";
 
-  let lastError: unknown;
-
-  for (const model of getModelOrder()) {
-    try {
-      const completion = await groqClient.chat.completions.create({
-        model,
+  const raw = await withCerebrasModelRotation("coding question", (model) =>
+    createChatCompletion(model, {
         messages: [
           { role: "system", content: systemMessage },
           { role: "user", content: prompt },
         ],
-        max_tokens: 2048,
+        maxCompletionTokens: 2048,
         temperature: 0,
-      });
+      }),
+  );
 
-      const raw = completion.choices[0]?.message?.content?.trim() ?? template;
-      // Strip <think> blocks and markdown fences despite instructions
-      const cleaned = raw
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .replace(/^```[a-z]*\n?/i, "")
-        .replace(/\n?```$/i, "")
-        .trim();
+  // Strip <think> blocks and markdown fences despite instructions
+  const cleaned = (raw || template)
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^```[a-z]*\n?/i, "")
+    .replace(/\n?```$/i, "")
+    .trim();
 
-      debug(`[Coding] Response (${model}):\n${cleaned.slice(0, 300)}...`);
-      return cleaned;
-    } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] Coding model "${model}" failed — trying next…`);
-      }
-      lastError = err;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("All Groq models failed for coding question.");
+  debug(`[Coding] Response:\n${cleaned.slice(0, 300)}...`);
+  return cleaned;
 }
