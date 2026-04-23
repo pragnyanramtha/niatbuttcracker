@@ -9,7 +9,6 @@ import type {
   SelectedCourse,
   RunConfig,
   CompletionMode,
-  AIProvider,
 } from "./types.js";
 import { loadConfig, saveConfig } from "./config.js";
 
@@ -56,66 +55,43 @@ async function captureAuthToken(): Promise<string> {
   }
 }
 
-// ── AI Provider selection ─────────────────────────────────────────────────────
+// ── Cerebras API key instructions & collection ───────────────────────────────
 
-async function selectAIProvider(): Promise<"puter" | "groq"> {
+async function getCerebrasKey(): Promise<string> {
   const cfg = await loadConfig();
+  const envKey = process.env.CEREBRAS_API_KEY?.trim();
 
-  // If already saved, use that
-  if (cfg.aiProvider) {
-    console.log(chalk.gray(`Using saved AI provider: ${chalk.cyan(cfg.aiProvider)}\n`));
-    return cfg.aiProvider;
+  if (cfg.cerebrasKey?.trim()) {
+    const cerebrasKey = cfg.cerebrasKey.trim();
+    await saveConfig({ cerebrasKey });
+    console.log(chalk.gray("Loaded Cerebras API key from config.\n"));
+    return cerebrasKey;
   }
 
-  console.log(chalk.bold.yellow("── AI Provider Selection ───────────────────────\n"));
-
-  const provider = await select<"puter" | "groq">({
-    message: "Choose your AI provider:",
-    choices: [
-      {
-        name: `${chalk.green("Puter.js")} ${chalk.dim("(Recommended)")} — Convenient, keep login, free Gemini models`,
-        value: "puter" as const,
-      },
-      {
-        name: `${chalk.blue("Groq API")} — Fast inference, requires API key from console.groq.com`,
-        value: "groq" as const,
-      },
-    ],
-  });
-
-  await saveConfig({ ...cfg, aiProvider: provider });
-  return provider;
-}
-
-// ── Groq API key instructions & collection ────────────────────────────────────
-
-async function getGroqKey(): Promise<string> {
-  const cfg = await loadConfig();
-
-  if (cfg.groqKey && cfg.groqKey.startsWith("gsk_")) {
-    console.log(chalk.gray("Loaded Groq API key from config.\n"));
-    return cfg.groqKey;
+  if (envKey) {
+    console.log(chalk.gray("Loaded Cerebras API key from CEREBRAS_API_KEY.\n"));
+    return envKey;
   }
 
-  console.log(chalk.bold.yellow("── Groq API Key Setup ──────────────────────────\n"));
-  console.log(chalk.gray("  You'll need to get an API key from Groq Console.\n"));
+  console.log(chalk.bold.yellow("── Cerebras API Key Setup ──────────────────────\n"));
+  console.log(chalk.gray("  You'll need to get an API key from Cerebras Cloud.\n"));
   console.log(chalk.bold("  Steps to get your API key:"));
   console.log(chalk.gray("    1. Ctrl+Click this link to open in your browser:"));
-  console.log(chalk.cyan("       https://console.groq.com/keys\n"));
-  console.log(chalk.gray("    2. Sign in or create a Groq account"));
+  console.log(chalk.cyan("       https://cloud.cerebras.ai/\n"));
+  console.log(chalk.gray("    2. Sign in or create a Cerebras account"));
   console.log(chalk.gray("    3. Click 'Create API Key'"));
-  console.log(chalk.gray("    4. Copy the API key (starts with 'gsk_')"));
+  console.log(chalk.gray("    4. Copy the API key"));
   console.log(chalk.gray("    5. Paste it below\n"));
 
-  const groqKey = (await password({
-    message: "Paste your Groq API key:",
+  const cerebrasKey = (await password({
+    message: "Paste your Cerebras API key:",
     mask: "•",
-    validate: (v) => (v.trim().startsWith("gsk_") ? true : 'Groq keys start with "gsk_"'),
+    validate: (v) => (v.trim().length > 0 ? true : "Cerebras API key is required"),
   })).trim();
 
-  await saveConfig({ ...cfg, groqKey });
-  console.log(chalk.green("Groq API key saved.\n"));
-  return groqKey;
+  await saveConfig({ cerebrasKey });
+  console.log(chalk.green("Cerebras API key saved.\n"));
+  return cerebrasKey;
 }
 
 // ── Semester / course selection ───────────────────────────────────────────────
@@ -226,7 +202,7 @@ async function selectMode(): Promise<CompletionMode> {
 
 // ── Summary & confirm ─────────────────────────────────────────────────────────
 
-function printSummary(config: Omit<RunConfig, "token" | "groqKey">): void {
+function printSummary(config: Omit<RunConfig, "token" | "cerebrasKey">): void {
   console.log(chalk.bold.yellow("\n── Run Summary ──────────────────────────────────\n"));
 
   for (const course of config.selectedCourses) {
@@ -253,16 +229,7 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
   // Auto-capture auth token from browser (no prompts)
   const token = await captureAuthToken();
 
-  // Select AI provider (Puter.js or Groq)
-  const aiProvider = await selectAIProvider();
-
-  // Get API key only if Groq is selected
-  let groqKey: string | undefined;
-  if (aiProvider === "groq") {
-    groqKey = await getGroqKey();
-  } else {
-    console.log(chalk.gray("Using Puter.js — no API key needed.\n"));
-  }
+  const cerebrasKey = await getCerebrasKey();
 
   const semester = await selectSemester(curriculum);
   const courses = await selectCourses(semester);
@@ -285,15 +252,14 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
 
   const config: RunConfig = {
     token,
-    aiProvider,
-    groqKey,
+    cerebrasKey,
     selectedCourses,
     mode,
     skipCompleted,
     delayMs,
   };
 
-  printSummary({ aiProvider, selectedCourses, mode, skipCompleted, delayMs });
+  printSummary({ selectedCourses, mode, skipCompleted, delayMs });
 
   // Single Enter to start — no y/n confirm
   await input({ message: chalk.green("Press Enter to start automation…"), default: "" });
