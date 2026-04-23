@@ -1094,6 +1094,6 @@ first then can selct sem, then course in that sem , Then they can choose if they
 
 well think how this selection should work.
 
-also i need to integrate the groq api to solve the questions and submit.
+also i need to integrate the cerebras api to solve the questions and submit.
 
 
