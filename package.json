@@ -23,6 +23,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "cross-env DEBUG=1 tsx src/index.ts",
+    "exec": "tsx src/agent-exec.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

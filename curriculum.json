@@ -404,6 +404,78 @@
                             ]
                         }
                     ]
+                },
+                {
+                    "semester_id": "ecbe0af8-e395-49ce-a365-f99ce34d786d",
+                    "semester_name": "Semester 3",
+                    "semester_subjects": [
+                        {
+                            "subject_id": "7a2ab09d-3d65-4037-a8aa-a87eaaa206a3",
+                            "subject_title": "Probability and Statistics",
+                            "subject_description": "NA",
+                            "category": "MATH",
+                            "subject_code": "25PSS301",
+                            "credits": "3.0",
+                            "duration": "7:30:00",
+                            "order": 3,
+                            "semester_courses": []
+                        },
+                        {
+                            "subject_id": "d8b57751-977e-4667-afad-d307f10f3e84",
+                            "subject_title": "Design and Analysis of Algorithms",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25DAA301",
+                            "credits": "4.0",
+                            "duration": "8:53:20",
+                            "order": 3,
+                            "semester_courses": []
+                        },
+                        {
+                            "subject_id": "aaea923c-161f-429d-9517-ab61ad848258",
+                            "subject_title": "Advanced Communication Skills",
+                            "subject_description": "NA",
+                            "category": "ENGLISH",
+                            "subject_code": "25ACS301",
+                            "credits": "2.0",
+                            "duration": "3 days, 18:00:00",
+                            "order": 3,
+                            "semester_courses": []
+                        },
+                        {
+                            "subject_id": "5356459e-7fe3-48d8-9512-b3af9a77d79f",
+                            "subject_title": "Back End Development",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25BWT301",
+                            "credits": "4.0",
+                            "duration": "3 days, 3:00:00",
+                            "order": 3,
+                            "semester_courses": []
+                        },
+                        {
+                            "subject_id": "ceb62e6f-90f0-4a11-b12e-43341353f96b",
+                            "subject_title": "Logical Reasoning and Analytical Skills",
+                            "subject_description": "NA",
+                            "category": "APTITUDE",
+                            "subject_code": "25LAS301",
+                            "credits": "2.0",
+                            "duration": "3 days, 18:00:00",
+                            "order": 3,
+                            "semester_courses": []
+                        },
+                        {
+                            "subject_id": "558d050b-59e9-4db6-b121-52065b5a3051",
+                            "subject_title": "AI For Finanace",
+                            "subject_description": "NA",
+                            "category": "TECH",
+                            "subject_code": "25BWT303",
+                            "credits": "3.0",
+                            "duration": "3 days, 18:00:00",
+                            "order": 3,
+                            "semester_courses": []
+                        }
+                    ]
                 }
             ]
         }
