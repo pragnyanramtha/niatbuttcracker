@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import chalk from "chalk";
 import { createClient } from "./api.js";
-import { initCerebras } from "./solver.js";
+import { initAI } from "./solver.js";
 import { run } from "./runner.js";
 import type {
   Curriculum,
@@ -54,7 +54,7 @@ async function loadCurriculum(): Promise<Curriculum> {
 async function main() {
   const args = parseArgs();
   const token = args.get("token") || process.env.CCBP_TOKEN;
-  const cerebrasKey = args.get("cerebras-key") || process.env.CEREBRAS_API_KEY;
+  const apiKey = args.get("api-key") || process.env.OPENAI_API_KEY;
   const semesterName = args.get("semester");
   const mode = (args.get("mode") || "all") as CompletionMode;
   const topicLimitRaw = args.get("topic-limit") ?? "all";
@@ -65,10 +65,7 @@ async function main() {
     console.error(chalk.red("--token <value> or CCBP_TOKEN env var required"));
     process.exit(1);
   }
-  if (!cerebrasKey) {
-    console.error(chalk.red("--cerebras-key <value> or CEREBRAS_API_KEY env var required"));
-    process.exit(1);
-  }
+  // apiKey is optional — free tier uses a default placeholder
 
   const curriculum = await loadCurriculum();
 
@@ -155,12 +152,12 @@ async function main() {
   }
   console.log(`  Mode: ${chalk.green(mode)}`);
 
-  initCerebras(cerebrasKey);
-  console.log(chalk.gray("  Initialized Cerebras AI provider.\n"));
+  initAI(apiKey || undefined);
+  console.log(chalk.gray("  Initialized AI provider.\n"));
 
   const config: RunConfig = {
     token,
-    cerebrasKey,
+    apiKey: apiKey || undefined,
     selectedCourses,
     mode,
     skipCompleted: true,

@@ -2,6 +2,7 @@ export {
   decodeCodeContent,
   encodeCodeContent,
   fetchDbSchema,
+  initAI,
   pickLanguage,
   refineSqlAnswer,
   solveAll,

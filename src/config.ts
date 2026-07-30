@@ -15,8 +15,7 @@ const CONFIG_PATH = join(CACHE_DIR, "config.json");
 const SESSION_PATH = join(CACHE_DIR, "ccbp-session.json");
 
 export interface UserConfig {
-  cerebrasKey?: string;
-  // Note: token removed - we now use browser session for auth
+  apiKey?: string;
 }
 
 async function ensureCacheDir(): Promise<void> {

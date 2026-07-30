@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import chalk from "chalk";
 import { runPrompts } from "./cli.js";
 import { createClient } from "./api.js";
-import { initCerebras } from "./solver.js";
+import { initAI } from "./solver.js";
 import { run } from "./runner.js";
 import { clearSession } from "./browser-auth.js";
 import type { Curriculum } from "./types.js";
@@ -59,8 +59,8 @@ async function main(): Promise<void> {
       throw err;
     }
 
-    initCerebras(config.cerebrasKey);
-    console.log(chalk.gray("Initialized Cerebras AI provider.\n"));
+    initAI(config.apiKey || undefined);
+    console.log(chalk.gray("Initialized AI provider.\n"));
 
     const client = createClient(config.token);
 

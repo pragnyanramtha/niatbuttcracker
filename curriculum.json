@@ -418,7 +418,14 @@
                             "credits": "3.0",
                             "duration": "7:30:00",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "39ddb075-b7e8-448a-bac2-b89baa4fb3f4",
+                                    "course_title": "Probability and Statistics(P&S)",
+                                    "no_of_topics": 6,
+                                    "order": 1
+                                }
+                            ]
                         },
                         {
                             "subject_id": "d8b57751-977e-4667-afad-d307f10f3e84",
@@ -429,7 +436,14 @@
                             "credits": "4.0",
                             "duration": "8:53:20",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "9e370332-c9dd-4778-9e65-e5d7f75c24f3",
+                                    "course_title": "Design and Analysis of Algorithms",
+                                    "no_of_topics": 5,
+                                    "order": 1
+                                }
+                            ]
                         },
                         {
                             "subject_id": "aaea923c-161f-429d-9517-ab61ad848258",
@@ -440,7 +454,14 @@
                             "credits": "2.0",
                             "duration": "3 days, 18:00:00",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "77b1f18a-a2e4-413a-9515-a91c399e4831",
+                                    "course_title": "Applied Communicative English",
+                                    "no_of_topics": 23,
+                                    "order": 1
+                                }
+                            ]
                         },
                         {
                             "subject_id": "5356459e-7fe3-48d8-9512-b3af9a77d79f",
@@ -451,7 +472,26 @@
                             "credits": "4.0",
                             "duration": "3 days, 3:00:00",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "d82d6905-6694-42c4-8c0c-bd2c887c1b53",
+                                    "course_title": "Node JS",
+                                    "no_of_topics": 8,
+                                    "order": 1
+                                },
+                                {
+                                    "course_id": "128b8668-816b-44eb-9f04-86a571b0b495",
+                                    "course_title": "More NodeJS Concepts",
+                                    "no_of_topics": 1,
+                                    "order": 2
+                                },
+                                {
+                                    "course_id": "b785ce15-460c-4e34-b3f3-b4b1b78ed789",
+                                    "course_title": "MongoDB Integration with NodeJS",
+                                    "no_of_topics": 1,
+                                    "order": 3
+                                }
+                            ]
                         },
                         {
                             "subject_id": "ceb62e6f-90f0-4a11-b12e-43341353f96b",
@@ -462,18 +502,32 @@
                             "credits": "2.0",
                             "duration": "3 days, 18:00:00",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "cd8b2378-67b5-4440-a0fe-915e5586aa96",
+                                    "course_title": "Logical Reasoning",
+                                    "no_of_topics": 10,
+                                    "order": 1
+                                }
+                            ]
                         },
                         {
-                            "subject_id": "558d050b-59e9-4db6-b121-52065b5a3051",
-                            "subject_title": "AI For Finanace",
+                            "subject_id": "952706f7-57f6-4eeb-81ec-5b477d87429b",
+                            "subject_title": "Digital Electronics",
                             "subject_description": "NA",
                             "category": "TECH",
-                            "subject_code": "25BWT303",
+                            "subject_code": "25DES301",
                             "credits": "3.0",
-                            "duration": "3 days, 18:00:00",
+                            "duration": "3 days, 3:00:00",
                             "order": 3,
-                            "semester_courses": []
+                            "semester_courses": [
+                                {
+                                    "course_id": "2cb08199-f374-4ca4-a94c-5d6ff0ea69b5",
+                                    "course_title": "Digital Electronics",
+                                    "no_of_topics": 1,
+                                    "order": 1
+                                }
+                            ]
                         }
                     ]
                 }

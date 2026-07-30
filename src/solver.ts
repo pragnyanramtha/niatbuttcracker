@@ -1,6 +1,6 @@
-import Cerebras from "@cerebras/cerebras_cloud_sdk";
+import OpenAI from "openai";
 import axios from "axios";
-import { debug, IS_DEBUG } from "./logger.js";
+import { debug } from "./logger.js";
 import type {
   Question,
   QuestionOption,
@@ -14,120 +14,45 @@ type ChatMessage =
   | { role: "user"; content: string }
   | { role: "assistant"; content: string };
 
-type ChatCompletionRequest = {
-  messages: ChatMessage[];
-  maxCompletionTokens: number;
-  temperature?: number;
-  topP?: number;
-};
+const API_BASE_URL = "https://opencode.ai/zen/v1";
 
-let cerebrasClient: Cerebras | null = null;
-
-export function initCerebras(apiKey: string): void {
-  cerebrasClient = new Cerebras({ apiKey });
-}
-
-// ── Model List ────────────────────────────────────────────────────────────────
-
-const PRIMARY_MODELS = [
-  "gpt-oss-120b",
-  "qwen-3-235b-a22b-instruct-2507",
+const MODELS = [
+  "big-pickle",
+  "nemotron-3-ultra-free",
+  "mimo-v2.5-free",
+  "deepseek-v4-flash-free",
+  "laguna-s-2.1-free",
+  "north-mini-code-free",
 ];
-const FALLBACK_MODEL = "llama3.1-8b";
-const MODELS = [...PRIMARY_MODELS, FALLBACK_MODEL];
 
-// ── Per-model rate-limit cooldown ─────────────────────────────────────────────
-// Maps model id → the ms timestamp at which it was rate-limited.
-// A model stays in cooldown for RATE_LIMIT_COOLDOWN_MS after a 429.
+let openaiClient: OpenAI | null = null;
 
-const RATE_LIMIT_COOLDOWN_MS = 60_000;
-const modelRateLimitedAt = new Map<string, number>();
-
-function markRateLimited(model: string): void {
-  modelRateLimitedAt.set(model, Date.now());
-  const readyAt = new Date(
-    Date.now() + RATE_LIMIT_COOLDOWN_MS,
-  ).toLocaleTimeString();
-  console.warn(`[solver] "${model}" rate-limited — skipping until ${readyAt}`);
-}
-
-function isRateLimitError(err: unknown): boolean {
-  if (err && typeof err === "object") {
-    const status = (err as { status?: number }).status;
-    if (status === 429) return true;
-    const msg = (err as { message?: string }).message ?? "";
-    if (/rate.?limit|429|too many requests/i.test(msg)) return true;
-  }
-  return false;
-}
-
-/**
- * Pick the next model for a request. Cerebras primary models are tried first.
- * If both primary models are rate-limited, fall back to llama3.1-8b.
- */
-function isModelRateLimited(model: string, now = Date.now()): boolean {
-  const at = modelRateLimitedAt.get(model);
-  if (at === undefined) return false;
-  if (now - at >= RATE_LIMIT_COOLDOWN_MS) {
-    modelRateLimitedAt.delete(model);
-    return false;
-  }
-  return true;
-}
-
-function getReadyAt(model: string): number {
-  return (modelRateLimitedAt.get(model) ?? 0) + RATE_LIMIT_COOLDOWN_MS;
-}
-
-function getNextModelForAttempt(attempted: Set<string>): string | null {
-  const now = Date.now();
-
-  for (const model of PRIMARY_MODELS) {
-    if (!attempted.has(model) && !isModelRateLimited(model, now)) {
-      return model;
-    }
-  }
-
-  const primaryRateLimited = PRIMARY_MODELS.every((model) =>
-    isModelRateLimited(model, now),
-  );
-
-  if (primaryRateLimited && !attempted.has(FALLBACK_MODEL)) {
-    console.warn(
-      `[solver] Primary Cerebras models are rate-limited. Falling back to "${FALLBACK_MODEL}".`,
-    );
-    return FALLBACK_MODEL;
-  }
-
-  const allModelsRateLimited = MODELS.every((model) =>
-    isModelRateLimited(model, now),
-  );
-  const limited = allModelsRateLimited
-    ? MODELS
-        .filter((model) => !attempted.has(model) && isModelRateLimited(model, now))
-        .sort((a, b) => getReadyAt(a) - getReadyAt(b))
-    : [];
-
-  if (limited.length > 0) {
-    console.warn("[solver] All Cerebras models are rate-limited. Cycling through anyway...");
-    return limited[0]!;
-  }
-
-  return null;
-}
-
-function requireCerebrasClient(): Cerebras {
-  if (!cerebrasClient) {
-    throw new Error("Cerebras not initialised. Call initCerebras() first.");
-  }
-  return cerebrasClient;
+export function initAI(apiKey?: string): void {
+  openaiClient = new OpenAI({
+    apiKey: apiKey || "placeholder",
+    baseURL: API_BASE_URL,
+    fetch: async (url, init) => {
+      const headers = new Headers(init?.headers);
+      headers.delete("authorization");
+      return fetch(url, { ...init, headers });
+    },
+  });
 }
 
 async function createChatCompletion(
   model: string,
-  request: ChatCompletionRequest,
+  request: {
+    messages: ChatMessage[];
+    maxCompletionTokens: number;
+    temperature?: number;
+    topP?: number;
+  },
 ): Promise<string> {
-  const completion = await requireCerebrasClient().chat.completions.create({
+  if (!openaiClient) {
+    throw new Error("AI not initialised. Call initAI() first.");
+  }
+
+  const completion = await openaiClient.chat.completions.create({
     model,
     messages: request.messages,
     max_completion_tokens: request.maxCompletionTokens,
@@ -135,49 +60,45 @@ async function createChatCompletion(
     top_p: request.topP ?? 1,
     stream: false,
   });
-  const response = completion as {
-    choices?: Array<{ message?: { content?: string | null } }>;
-  };
 
-  return response.choices?.[0]?.message?.content?.trim() ?? "";
+  return completion.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
-async function withCerebrasModelRotation<T>(
+async function withModelRotation<T>(
   label: string,
   operation: (model: string) => Promise<T>,
 ): Promise<T> {
   const attempted = new Set<string>();
   let lastError: unknown;
 
-  while (true) {
-    const model = getNextModelForAttempt(attempted);
-    if (!model) break;
+  for (const model of MODELS) {
+    if (attempted.has(model)) continue;
     attempted.add(model);
 
     try {
       return await operation(model);
     } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] ${label} model "${model}" failed - trying next...`);
-      }
+      console.warn(`[solver] ${label} model "${model}" failed — trying next...`);
       lastError = err;
     }
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new Error(`All Cerebras models failed for ${label}.`);
+    : new Error(`All models failed for ${label}.`);
+}
+
+function stripHtml(text: string): string {
+  return text
+    .replace(/<img[^>]*>/gi, "")
+    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .trim();
 }
 
 // ── MCQ Prompt Builder ────────────────────────────────────────────────────────
 
-/**
- * Build a prompt that uses A/B/C/D labels (LLMs are trained on this format)
- * and explicitly asks the model to reason before committing to an answer.
- * Returns both the prompt string and the letter→option_id mapping.
- */
 function buildPrompt(question: Question): {
   prompt: string;
   letterToId: Map<string, string>;
@@ -186,10 +107,7 @@ function buildPrompt(question: Question): {
   const letterToId = new Map<string, string>();
   const parts: string[] = [];
 
-  const questionText = question.question.content
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .trim();
+  const questionText = stripHtml(question.question.content);
 
   parts.push(`Question:\n${questionText}`);
 
@@ -204,49 +122,60 @@ function buildPrompt(question: Question): {
   for (let i = 0; i < question.options.length; i++) {
     const opt = question.options[i]!;
     const letter = LETTERS[i] ?? String(i + 1);
-    const text = opt.content
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .trim();
+    const text = stripHtml(opt.content);
     parts.push(`  ${letter}) ${text}`);
     letterToId.set(letter, opt.option_id);
   }
 
   parts.push(
-    "\nAnalyze the question carefully and think step by step.",
-    "Then end your response with exactly this line:",
-    "Answer: X",
-    "where X is the single letter of the correct option (A, B, C, D, …).",
+    "",
+    "Instructions:",
+    "1. Read the question and ALL options carefully.",
+    "2. For each option, briefly state whether it is correct or incorrect and why.",
+    "3. If this is a code question, trace through the code step by step.",
+    "4. After evaluating all options, state your final answer.",
+    "5. End your response with EXACTLY this line (nothing else after it):",
+    "   Answer: <letter>",
   );
 
   return { prompt: parts.join("\n"), letterToId };
 }
 
-/**
- * Parse the model's response to find the chosen option_id.
- * Priority:
- *   1. "Answer: X" line anywhere in the response (handles <think> blocks too)
- *   2. Standalone letter on the last non-empty line
- *   3. UUID scan (legacy fallback)
- *   4. First option (last-resort fallback)
- */
 function pickBestOptionId(
   responseText: string,
   options: QuestionOption[],
   letterToId: Map<string, string>,
 ): string {
-  // Strip <think>...</think> reasoning blocks emitted by some models
+  // Strip thinking tags if present
   const cleaned = responseText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
-  // 1. Look for "Answer: X" (case-insensitive, anywhere)
-  const answerLineMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
-  if (answerLineMatch) {
-    const letter = answerLineMatch[1]!.toUpperCase();
+  // Priority 1: "Answer: X" at the end (most reliable — our prompt asks for this)
+  const lastLineMatch = cleaned.match(/answer[:\s]+([A-H])\s*$/im);
+  if (lastLineMatch) {
+    const letter = lastLineMatch[1]!.toUpperCase();
     const id = letterToId.get(letter);
     if (id) return id;
   }
 
-  // 2. Check the last few non-empty lines for a bare letter
+  // Priority 2: "Answer: X" anywhere in the text
+  const anywhereMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
+  if (anywhereMatch) {
+    const letter = anywhereMatch[1]!.toUpperCase();
+    const id = letterToId.get(letter);
+    if (id) return id;
+  }
+
+  // Priority 3: "the answer is X" / "the correct answer is X" / "correct option is X"
+  const phraseMatch = cleaned.match(
+    /(?:the\s+)?(?:correct\s+)?answer\s+is\s+([A-H])\b/i,
+  );
+  if (phraseMatch) {
+    const letter = phraseMatch[1]!.toUpperCase();
+    const id = letterToId.get(letter);
+    if (id) return id;
+  }
+
+  // Priority 4: look at the last 5 non-empty lines for a bare letter
   const lines = cleaned
     .split("\n")
     .map((l) => l.trim())
@@ -259,7 +188,6 @@ function pickBestOptionId(
       const id = letterToId.get(letter);
       if (id) return id;
     }
-    // "The answer is B" / "Option C" / "Choose D" patterns
     const inlineMatch = line.match(
       /\b(?:answer(?:\s+is)?|option|choose|select)[:\s]+([A-H])\b/i,
     );
@@ -270,7 +198,7 @@ function pickBestOptionId(
     }
   }
 
-  // 3. UUID scan (handles models that ignored the letter format)
+  // Priority 5: UUID in response matching an option_id
   const uuidPattern =
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
   const uuidMatches = responseText.match(uuidPattern) ?? [];
@@ -283,7 +211,7 @@ function pickBestOptionId(
     }
   }
 
-  // 4. Last resort
+  // Fallback: first option
   return options[0]!.option_id;
 }
 
@@ -292,24 +220,29 @@ function pickBestOptionId(
 export async function solveQuestion(question: Question): Promise<string> {
   const { prompt, letterToId } = buildPrompt(question);
 
-  const raw = await withCerebrasModelRotation("MCQ", (model) =>
+  const raw = await withModelRotation("MCQ", (model) =>
     createChatCompletion(model, {
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert tutor and problem-solver with deep knowledge across computer science, " +
-              "mathematics, science, languages, and general academia. " +
-              "When given a multiple-choice question, reason through it carefully before answering. " +
-              "Always end your response with 'Answer: X' where X is the letter of the correct option.",
-          },
-          { role: "user", content: prompt },
-        ],
-        maxCompletionTokens: 1024,
-        temperature: 0,
-      }),
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an expert academic tutor. You will be given a multiple-choice question with options labeled A, B, C, D, etc.\n\n" +
+            "RULES:\n" +
+            "- Carefully analyze EACH option before choosing.\n" +
+            "- For code/tracing questions, trace through the code line by line with concrete values.\n" +
+            "- For theory questions, use your domain knowledge to eliminate wrong answers.\n" +
+            "- Do NOT guess. If unsure, reason through each option by elimination.\n" +
+            "- Your LAST line must be exactly: Answer: X (where X is the letter A-D).\n" +
+            "- Nothing may appear after the Answer: line.",
+        },
+        { role: "user", content: prompt },
+      ],
+      maxCompletionTokens: 1024,
+      temperature: 0,
+    }),
   );
 
+  debug(`[MCQ] AI raw response:\n${raw}`);
   return pickBestOptionId(raw, question.options, letterToId);
 }
 
@@ -324,12 +257,10 @@ export async function solveAll(
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i]!;
 
-    // Only handle MCQ variants — skip types that require writing code
     if (
       q.question_type !== "MULTIPLE_CHOICE" &&
       q.question_type !== "CODE_ANALYSIS_MULTIPLE_CHOICE"
     ) {
-      // Fallback: pick first option rather than leaving blank
       answers.set(q.question_id, q.options[0]?.option_id ?? "");
       onProgress?.(i + 1, questions.length);
       continue;
@@ -339,16 +270,10 @@ export async function solveAll(
       const optionId = await solveQuestion(q);
       answers.set(q.question_id, optionId);
     } catch {
-      // On total failure, pick first option as safe fallback
       answers.set(q.question_id, q.options[0]?.option_id ?? "");
     }
 
     onProgress?.(i + 1, questions.length);
-
-    // Small delay to avoid hitting rate limits
-    if (i < questions.length - 1) {
-      await new Promise((r) => setTimeout(r, 300));
-    }
   }
 
   return answers;
@@ -356,25 +281,16 @@ export async function solveAll(
 
 // ── SQL Solver ────────────────────────────────────────────────────────────────
 
-// ── DB Schema Fetcher ─────────────────────────────────────────────────────────
-
-/**
- * Downloads the SQLite DB from db_url and returns a human-readable schema
- * string like: "TABLE products (id INTEGER, name TEXT, price REAL, ...)"
- * This gives the AI the REAL table/column names instead of guessing.
- */
 export async function fetchDbSchema(dbUrl: string): Promise<string> {
   if (!dbUrl) return "";
   try {
     const res = await axios.get<ArrayBuffer>(dbUrl, { responseType: "arraybuffer", timeout: 10000 });
     const buf = Buffer.from(res.data);
 
-    // Lazy-load sql.js to avoid startup cost
     const initSqlJs = (await import("sql.js")).default;
     const SQL = await initSqlJs();
     const db = new SQL.Database(buf);
 
-    // Get all user tables
     const tables: string[] = db
       .exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .flatMap((r) => r.values.map((v) => String(v[0])));
@@ -385,7 +301,7 @@ export async function fetchDbSchema(dbUrl: string): Promise<string> {
     for (const table of tables) {
       const cols = db
         .exec(`PRAGMA table_info(${table})`)
-        .flatMap((r) => r.values.map((v) => `${v[1]} ${v[2]}`));  // name + type
+        .flatMap((r) => r.values.map((v) => `${v[1]} ${v[2]}`));
       schemaParts.push(`TABLE ${table} (${cols.join(", ")})`);
     }
 
@@ -398,10 +314,7 @@ export async function fetchDbSchema(dbUrl: string): Promise<string> {
 }
 
 function buildSqlPrompt(questions: SqlQuestion[], dbContext: string, realSchema: string): string {
-  const description = dbContext
-    .replace(/<[^>]+>/g, "")
-    .replace(/\r\n/g, "\n")
-    .trim();
+  const description = stripHtml(dbContext).replace(/\r\n/g, "\n");
 
   const parts: string[] = [
     "You are an expert SQL developer. Given the database schema below, write correct SQL queries for each question.",
@@ -421,8 +334,8 @@ function buildSqlPrompt(questions: SqlQuestion[], dbContext: string, realSchema:
   parts.push("", "Questions:");
 
   for (const q of questions) {
-    const text = q.question.content.replace(/<[^>]+>/g, "").trim();
-    const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim();
+    const text = stripHtml(q.question.content);
+    const starter = stripHtml(q.default_code?.code_content ?? "");
     parts.push(`\n[${q.question_id}]\n${text}`);
     if (starter && starter !== "SELECT" && starter.length > 2) {
       parts.push(`Starter SQL (shows column/table names):\n${starter}`);
@@ -445,9 +358,8 @@ export async function solveSqlQuestions(
   onProgress?: (done: number, total: number) => void,
 ): Promise<Map<string, string>> {
   const answers = new Map<string, string>();
-  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none — using description context)"}`);
+  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none)"}`);
 
-  // Solve in batches of 10 to stay within token limits
   const BATCH = 10;
   let done = 0;
 
@@ -461,8 +373,8 @@ export async function solveSqlQuestions(
     let parseFailed = false;
 
     try {
-      parsed = await withCerebrasModelRotation("SQL", async (model) => {
-        const raw = await createChatCompletion(model, {
+      const raw = await withModelRotation("SQL", (model) =>
+        createChatCompletion(model, {
           messages: [
             {
               role: "system",
@@ -473,35 +385,31 @@ export async function solveSqlQuestions(
           ],
           maxCompletionTokens: 2048,
           temperature: 0,
-        });
+        }),
+      );
 
-        debug(`[SQL Solver] Raw AI response (${model}):\n${raw}`);
-        // Strip <think> blocks from reasoning models
-        const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-        // Strip markdown code fences if present
-        const cleaned = noThink
-          .replace(/^```[a-z]*\n?/i, "")
-          .replace(/\n?```$/i, "")
-          .trim();
-        const parsedBatch = JSON.parse(cleaned) as Record<string, string>;
-        debug(`[SQL Solver] Parsed ${Object.keys(parsedBatch).length} answers`);
-        return parsedBatch;
-      });
+      debug(`[SQL Solver] Raw AI response:\n${raw}`);
+      const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      const cleaned = noThink
+        .replace(/^```[a-z]*\n?/i, "")
+        .replace(/\n?```$/i, "")
+        .trim();
+      parsed = JSON.parse(cleaned) as Record<string, string>;
+      debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
     } catch {
       parseFailed = true;
     }
 
-    // If batch parse failed, fall back to solving each individually
     if (Object.keys(parsed).length === 0 && parseFailed) {
       for (const q of batch) {
-        const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
-        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\n${realSchema ? `Schema:\n${realSchema}` : `Database:\n${dbContext}`}\n${starter ? `Starter SQL:\n${starter}\n` : ""}\nTask: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+        const starter = stripHtml(q.default_code?.code_content ?? "");
+        const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.\n\n${realSchema ? `Schema:\n${realSchema}` : `Database:\n${dbContext}`}\n${starter ? `Starter SQL:\n${starter}\n` : ""}\nTask: ${stripHtml(q.question.content)}`;
         try {
-          const sql = await withCerebrasModelRotation("SQL fallback", (model) =>
+          const sql = await withModelRotation("SQL fallback", (model) =>
             createChatCompletion(model, {
-            messages: [{ role: "user", content: fallbackPrompt }],
-            maxCompletionTokens: 512,
-            temperature: 0,
+              messages: [{ role: "user", content: fallbackPrompt }],
+              maxCompletionTokens: 512,
+              temperature: 0,
             }),
           );
           parsed[q.question_id] = sql
@@ -529,10 +437,6 @@ export async function solveSqlQuestions(
   return answers;
 }
 
-/**
- * Given a failed SQL and the exact error message from the server,
- * ask the AI to fix it. Returns corrected SQL or original if all models fail.
- */
 export async function refineSqlAnswer(
   question: SqlQuestion,
   failedSql: string,
@@ -540,8 +444,8 @@ export async function refineSqlAnswer(
   realSchema: string,
   dbContext: string,
 ): Promise<string> {
-  const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
-  const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
+  const schema = realSchema || stripHtml(dbContext);
+  const questionText = stripHtml(question.question.content);
 
   const prompt = [
     "Your previous SQL query returned the WRONG result. Fix it.",
@@ -560,7 +464,7 @@ export async function refineSqlAnswer(
   debug(`[SQL Refine] Retry prompt:\n${prompt}`);
 
   try {
-    const raw = await withCerebrasModelRotation("SQL refine", (model) =>
+    const raw = await withModelRotation("SQL refine", (model) =>
       createChatCompletion(model, {
         messages: [
           { role: "system", content: "You are an expert SQL developer. Fix the incorrect SQL query using the error feedback. Respond with ONLY the corrected SQL." },
@@ -580,7 +484,6 @@ export async function refineSqlAnswer(
 
 // ── Coding Solver ─────────────────────────────────────────────────────────────
 
-/** Pick the best language from the available ones (prefer Python, then Node.js, then C++, then Java) */
 export function pickLanguage(applicable: CodingLanguage[]): CodingLanguage {
   const preference: CodingLanguage[] = ["PYTHON", "NODE_JS", "CPP", "JAVA"];
   for (const lang of preference) {
@@ -589,7 +492,6 @@ export function pickLanguage(applicable: CodingLanguage[]): CodingLanguage {
   return applicable[0] ?? "PYTHON";
 }
 
-/** Extract the raw code string from the API's double-encoded code_content */
 export function decodeCodeContent(raw: string): string {
   try {
     const parsed = JSON.parse(raw);
@@ -600,7 +502,6 @@ export function decodeCodeContent(raw: string): string {
   }
 }
 
-/** Re-encode code for submission: code_content must be JSON.stringify(code) */
 export function encodeCodeContent(code: string): string {
   return JSON.stringify(code);
 }
@@ -610,10 +511,7 @@ function buildCodingPrompt(
   lang: CodingLanguage,
   template: string,
 ): string {
-  const questionText = q.question.content
-    .replace(/<br\s*\/?>\n?/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .trim();
+  const questionText = stripHtml(q.question.content);
 
   const testCasesText = q.test_cases
     .map((tc, i) => {
@@ -637,7 +535,7 @@ function buildCodingPrompt(
         "- Do NOT add int main() or any code outside the class.",
         "- Do NOT change the class name, function signature, or parameters.",
         "- Return the complete file exactly as given: #include lines + class with filled function body.",
-        "- The judge calls your function directly — a main() will cause compile errors."
+        "- The judge calls your function directly — a main() will cause compile errors.",
       ].join("\n")
     : "Respond with ONLY the complete runnable code. No explanation, no markdown fences.";
 
@@ -672,7 +570,6 @@ export async function solveCodingQuestion(
   const savedTemplate = q.latest_saved_code
     ? decodeCodeContent(q.latest_saved_code.code_content)
     : null;
-  // If the user has started on a solution (more than +20 chars over base template), use it
   const template = (savedTemplate && savedTemplate.length > defaultTemplate.length + 20)
     ? savedTemplate
     : defaultTemplate;
@@ -684,18 +581,17 @@ export async function solveCodingQuestion(
     ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation."
     : "You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.";
 
-  const raw = await withCerebrasModelRotation("coding question", (model) =>
+  const raw = await withModelRotation("coding question", (model) =>
     createChatCompletion(model, {
-        messages: [
-          { role: "system", content: systemMessage },
-          { role: "user", content: prompt },
-        ],
-        maxCompletionTokens: 2048,
-        temperature: 0,
-      }),
+      messages: [
+        { role: "system", content: systemMessage },
+        { role: "user", content: prompt },
+      ],
+      maxCompletionTokens: 2048,
+      temperature: 0,
+    }),
   );
 
-  // Strip <think> blocks and markdown fences despite instructions
   const cleaned = (raw || template)
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/^```[a-z]*\n?/i, "")

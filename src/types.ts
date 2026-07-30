@@ -309,7 +309,7 @@ export type CompletionMode = "learning_sets" | "practice" | "question_sets" | "a
 
 export interface RunConfig {
   token: string;
-  cerebrasKey: string;
+  apiKey?: string;
   selectedCourses: SelectedCourse[];
   mode: CompletionMode;
   skipCompleted: boolean;

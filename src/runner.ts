@@ -691,8 +691,9 @@ async function processTopic(
     units = res.units_details;
     unitSpinner.succeed(`  ${units.length} unit(s) found`);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    unitSpinner.fail(`  Could not load units: ${msg}`);
+    const status = (err as any)?.response?.status;
+    unitSpinner.fail(`  Could not load units: ${err instanceof Error ? err.message : String(err)}`);
+    if (status === 401) throw err; // bubble up to index.ts retry loop
     return;
   }
 
@@ -757,8 +758,9 @@ async function processCourse(
       `${courseDetails.topics.length} topics loaded  (${courseDetails.completion_percentage.toFixed(1)}% complete)`,
     );
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    courseSpinner.fail(`Failed to load course: ${msg}`);
+    const status = (err as any)?.response?.status;
+    courseSpinner.fail(`Failed to load course: ${err instanceof Error ? err.message : String(err)}`);
+    if (status === 401) throw err; // bubble up to index.ts retry loop
     return;
   }
 
