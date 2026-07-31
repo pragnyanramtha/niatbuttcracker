@@ -18,10 +18,10 @@ const API_BASE_URL = "https://opencode.ai/zen/v1";
 
 const MODELS = [
   "big-pickle",
-  "nemotron-3-ultra-free",
-  "mimo-v2.5-free",
   "deepseek-v4-flash-free",
+  "mimo-v2.5-free",
   "laguna-s-2.1-free",
+  "nemotron-3-ultra-free",
   "north-mini-code-free",
 ];
 
@@ -52,14 +52,21 @@ async function createChatCompletion(
     throw new Error("AI not initialised. Call initAI() first.");
   }
 
-  const completion = await openaiClient.chat.completions.create({
-    model,
-    messages: request.messages,
-    max_completion_tokens: request.maxCompletionTokens,
-    temperature: request.temperature ?? 0,
-    top_p: request.topP ?? 1,
-    stream: false,
-  });
+  const TIMEOUT_MS = 45000;
+
+  const completion = await Promise.race([
+    openaiClient.chat.completions.create({
+      model,
+      messages: request.messages,
+      max_completion_tokens: request.maxCompletionTokens,
+      temperature: request.temperature ?? 0,
+      top_p: request.topP ?? 1,
+      stream: false,
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Request timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
+    ),
+  ]);
 
   return completion.choices?.[0]?.message?.content?.trim() ?? "";
 }

@@ -240,18 +240,12 @@ async function handlePracticeSet(
 async function handleQuestionSet(
   client: AxiosInstance,
   unit: Unit,
-  skipCompleted: boolean,
   delayMs: number,
 ): Promise<void> {
   const name =
     unit.question_set_unit_details?.name ??
     unit.learning_resource_set_unit_details?.name ??
     unit.unit_id;
-
-  if (skipCompleted && unit.completion_percentage >= 100) {
-    log("skip", `Question Set: ${chalk.dim(name)} ${chalk.gray("(already done)")}`);
-    return;
-  }
 
   if (unit.is_unit_locked) {
     log("warn", `Question Set: ${chalk.dim(name)} ${chalk.yellow("(locked — skipping)")}`);
@@ -456,7 +450,13 @@ async function handleQuestionSet(
     summary = await getCodingQuestionsSummary(client, unit.unit_id);
     summarySpinner.succeed(`  ${summary.length} coding question(s) found`);
   } catch (err: unknown) {
+    const status = (err as any)?.response?.status;
     const msg = err instanceof Error ? err.message : String(err);
+    // 4xx means this unit is not a coding question set — skip silently
+    if (status && status < 500) {
+      summarySpinner.succeed("  Not a coding question set — skipping");
+      return;
+    }
     summarySpinner.fail(`  Failed to fetch question list: ${msg}`);
     return;
   }
@@ -733,7 +733,7 @@ async function processTopic(
     await limiter.runAll(
       questionUnits.map(
         (unit) => () =>
-          handleQuestionSet(client, unit, config.skipCompleted, config.delayMs),
+          handleQuestionSet(client, unit, config.delayMs),
       ),
     );
   }
