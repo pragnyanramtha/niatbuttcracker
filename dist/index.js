@@ -1,56 +1,23 @@
 #!/usr/bin/env node
+import {
+  getSessionPath
+} from "./chunk-LVTSKNQH.js";
 
 // src/index.ts
-import { readFile as readFile2 } from "fs/promises";
+import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
-import { join as join2, dirname } from "path";
+import { join, dirname } from "path";
 import chalk5 from "chalk";
 
 // src/cli.ts
-import { input, password, checkbox, select } from "@inquirer/prompts";
+import { input, checkbox, select } from "@inquirer/prompts";
 import chalk2 from "chalk";
 import ora from "ora";
 
 // src/browser-auth.ts
 import chalk from "chalk";
-import { existsSync as existsSync2, unlinkSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
 import { chromium } from "playwright";
-
-// src/config.ts
-import { readFile, writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
-function getCacheDir() {
-  if (process.platform === "win32") {
-    return join(process.env.LOCALAPPDATA || process.env.APPDATA || ".", "niatbuttcracker");
-  }
-  return join(process.env.HOME || ".", ".cache", "niatbuttcracker");
-}
-var CACHE_DIR = getCacheDir();
-var CONFIG_PATH = join(CACHE_DIR, "config.json");
-var SESSION_PATH = join(CACHE_DIR, "ccbp-session.json");
-async function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    await mkdir(CACHE_DIR, { recursive: true });
-  }
-}
-async function loadConfig() {
-  try {
-    const raw = await readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-async function saveConfig(cfg) {
-  await ensureCacheDir();
-  await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), "utf-8");
-}
-function getSessionPath() {
-  return SESSION_PATH;
-}
-
-// src/browser-auth.ts
 async function getAvailableBrowserChannel() {
   const channels = ["chrome", "msedge"];
   for (const channel of channels) {
@@ -73,11 +40,11 @@ async function getAvailableBrowserChannel() {
   return null;
 }
 function hasSavedSession() {
-  return existsSync2(getSessionPath());
+  return existsSync(getSessionPath());
 }
 function clearSession() {
   const sessionPath = getSessionPath();
-  if (existsSync2(sessionPath)) {
+  if (existsSync(sessionPath)) {
     unlinkSync(sessionPath);
   }
 }
@@ -190,36 +157,10 @@ async function captureAuthToken() {
     throw new Error(result.error || "Failed to capture auth token");
   }
 }
-async function getCerebrasKey() {
+async function getApiKey() {
+  const { loadConfig } = await import("./config-RCUKSPDG.js");
   const cfg = await loadConfig();
-  const envKey = process.env.CEREBRAS_API_KEY?.trim();
-  if (cfg.cerebrasKey?.trim()) {
-    const cerebrasKey2 = cfg.cerebrasKey.trim();
-    await saveConfig({ cerebrasKey: cerebrasKey2 });
-    console.log(chalk2.gray("Loaded Cerebras API key from config.\n"));
-    return cerebrasKey2;
-  }
-  if (envKey) {
-    console.log(chalk2.gray("Loaded Cerebras API key from CEREBRAS_API_KEY.\n"));
-    return envKey;
-  }
-  console.log(chalk2.bold.yellow("\u2500\u2500 Cerebras API Key Setup \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
-  console.log(chalk2.gray("  You'll need to get an API key from Cerebras Cloud.\n"));
-  console.log(chalk2.bold("  Steps to get your API key:"));
-  console.log(chalk2.gray("    1. Ctrl+Click this link to open in your browser:"));
-  console.log(chalk2.cyan("       https://cloud.cerebras.ai/\n"));
-  console.log(chalk2.gray("    2. Sign in or create a Cerebras account"));
-  console.log(chalk2.gray("    3. Click 'Create API Key'"));
-  console.log(chalk2.gray("    4. Copy the API key"));
-  console.log(chalk2.gray("    5. Paste it below\n"));
-  const cerebrasKey = (await password({
-    message: "Paste your Cerebras API key:",
-    mask: "\u2022",
-    validate: (v) => v.trim().length > 0 ? true : "Cerebras API key is required"
-  })).trim();
-  await saveConfig({ cerebrasKey });
-  console.log(chalk2.green("Cerebras API key saved.\n"));
-  return cerebrasKey;
+  return cfg.apiKey?.trim() || process.env.OPENAI_API_KEY?.trim() || void 0;
 }
 async function selectSemester(curriculum) {
   console.log(chalk2.bold.yellow("\u2500\u2500 Semester Selection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"));
@@ -324,7 +265,7 @@ function printSummary(config) {
 async function runPrompts(curriculum) {
   banner();
   const token = await captureAuthToken();
-  const cerebrasKey = await getCerebrasKey();
+  const apiKey = await getApiKey();
   const semester = await selectSemester(curriculum);
   const courses = await selectCourses(semester);
   const selectedCourses = [];
@@ -341,7 +282,7 @@ async function runPrompts(curriculum) {
   const delayMs = 100;
   const config = {
     token,
-    cerebrasKey,
+    apiKey,
     selectedCourses,
     mode,
     skipCompleted,
@@ -477,7 +418,7 @@ async function startCodingQuestion(client, questionId) {
 }
 
 // src/solver.ts
-import Cerebras from "@cerebras/cerebras_cloud_sdk";
+import OpenAI from "openai";
 import axios2 from "axios";
 
 // src/logger.ts
@@ -513,80 +454,32 @@ function debugAxiosError(context, err) {
 }
 
 // src/solver.ts
-var cerebrasClient = null;
-function initCerebras(apiKey) {
-  cerebrasClient = new Cerebras({ apiKey });
-}
-var PRIMARY_MODELS = [
-  "gpt-oss-120b",
-  "qwen-3-235b-a22b-instruct-2507"
+var API_BASE_URL = "https://opencode.ai/zen/v1";
+var MODELS = [
+  "north-mini-code-free",
+  "big-pickle",
+  "mimo-v2.5-free",
+  "nemotron-3-ultra-free",
+  "deepseek-v4-flash-free",
+  "laguna-s-2.1-free"
 ];
-var FALLBACK_MODEL = "llama3.1-8b";
-var MODELS = [...PRIMARY_MODELS, FALLBACK_MODEL];
-var RATE_LIMIT_COOLDOWN_MS = 6e4;
-var modelRateLimitedAt = /* @__PURE__ */ new Map();
-function markRateLimited(model) {
-  modelRateLimitedAt.set(model, Date.now());
-  const readyAt = new Date(
-    Date.now() + RATE_LIMIT_COOLDOWN_MS
-  ).toLocaleTimeString();
-  console.warn(`[solver] "${model}" rate-limited \u2014 skipping until ${readyAt}`);
-}
-function isRateLimitError(err) {
-  if (err && typeof err === "object") {
-    const status = err.status;
-    if (status === 429) return true;
-    const msg = err.message ?? "";
-    if (/rate.?limit|429|too many requests/i.test(msg)) return true;
-  }
-  return false;
-}
-function isModelRateLimited(model, now = Date.now()) {
-  const at = modelRateLimitedAt.get(model);
-  if (at === void 0) return false;
-  if (now - at >= RATE_LIMIT_COOLDOWN_MS) {
-    modelRateLimitedAt.delete(model);
-    return false;
-  }
-  return true;
-}
-function getReadyAt(model) {
-  return (modelRateLimitedAt.get(model) ?? 0) + RATE_LIMIT_COOLDOWN_MS;
-}
-function getNextModelForAttempt(attempted) {
-  const now = Date.now();
-  for (const model of PRIMARY_MODELS) {
-    if (!attempted.has(model) && !isModelRateLimited(model, now)) {
-      return model;
+var openaiClient = null;
+function initAI(apiKey) {
+  openaiClient = new OpenAI({
+    apiKey: apiKey || "placeholder",
+    baseURL: API_BASE_URL,
+    fetch: async (url, init) => {
+      const headers = new Headers(init?.headers);
+      headers.delete("authorization");
+      return fetch(url, { ...init, headers });
     }
-  }
-  const primaryRateLimited = PRIMARY_MODELS.every(
-    (model) => isModelRateLimited(model, now)
-  );
-  if (primaryRateLimited && !attempted.has(FALLBACK_MODEL)) {
-    console.warn(
-      `[solver] Primary Cerebras models are rate-limited. Falling back to "${FALLBACK_MODEL}".`
-    );
-    return FALLBACK_MODEL;
-  }
-  const allModelsRateLimited = MODELS.every(
-    (model) => isModelRateLimited(model, now)
-  );
-  const limited = allModelsRateLimited ? MODELS.filter((model) => !attempted.has(model) && isModelRateLimited(model, now)).sort((a, b) => getReadyAt(a) - getReadyAt(b)) : [];
-  if (limited.length > 0) {
-    console.warn("[solver] All Cerebras models are rate-limited. Cycling through anyway...");
-    return limited[0];
-  }
-  return null;
-}
-function requireCerebrasClient() {
-  if (!cerebrasClient) {
-    throw new Error("Cerebras not initialised. Call initCerebras() first.");
-  }
-  return cerebrasClient;
+  });
 }
 async function createChatCompletion(model, request) {
-  const completion = await requireCerebrasClient().chat.completions.create({
+  if (!openaiClient) {
+    throw new Error("AI not initialised. Call initAI() first.");
+  }
+  const completion = await openaiClient.chat.completions.create({
     model,
     messages: request.messages,
     max_completion_tokens: request.maxCompletionTokens,
@@ -594,34 +487,31 @@ async function createChatCompletion(model, request) {
     top_p: request.topP ?? 1,
     stream: false
   });
-  const response = completion;
-  return response.choices?.[0]?.message?.content?.trim() ?? "";
+  return completion.choices?.[0]?.message?.content?.trim() ?? "";
 }
-async function withCerebrasModelRotation(label, operation) {
+async function withModelRotation(label, operation) {
   const attempted = /* @__PURE__ */ new Set();
   let lastError;
-  while (true) {
-    const model = getNextModelForAttempt(attempted);
-    if (!model) break;
+  for (const model of MODELS) {
+    if (attempted.has(model)) continue;
     attempted.add(model);
     try {
       return await operation(model);
     } catch (err) {
-      if (isRateLimitError(err)) {
-        markRateLimited(model);
-      } else {
-        console.warn(`[solver] ${label} model "${model}" failed - trying next...`);
-      }
+      console.warn(`[solver] ${label} model "${model}" failed \u2014 trying next...`);
       lastError = err;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(`All Cerebras models failed for ${label}.`);
+  throw lastError instanceof Error ? lastError : new Error(`All models failed for ${label}.`);
+}
+function stripHtml(text) {
+  return text.replace(/<img[^>]*>/gi, "").replace(/!\[.*?\]\(.*?\)/g, "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
 }
 function buildPrompt(question) {
   const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
   const letterToId = /* @__PURE__ */ new Map();
   const parts = [];
-  const questionText = question.question.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  const questionText = stripHtml(question.question.content);
   parts.push(`Question:
 ${questionText}`);
   if (question.code_analysis?.code_details) {
@@ -638,7 +528,7 @@ ${code}
   for (let i = 0; i < question.options.length; i++) {
     const opt = question.options[i];
     const letter = LETTERS[i] ?? String(i + 1);
-    const text = opt.content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+    const text = stripHtml(opt.content);
     parts.push(`  ${letter}) ${text}`);
     letterToId.set(letter, opt.option_id);
   }
@@ -690,7 +580,7 @@ function pickBestOptionId(responseText, options, letterToId) {
 }
 async function solveQuestion(question) {
   const { prompt, letterToId } = buildPrompt(question);
-  const raw = await withCerebrasModelRotation(
+  const raw = await withModelRotation(
     "MCQ",
     (model) => createChatCompletion(model, {
       messages: [
@@ -751,7 +641,7 @@ async function fetchDbSchema(dbUrl) {
   }
 }
 function buildSqlPrompt(questions, dbContext, realSchema) {
-  const description = dbContext.replace(/<[^>]+>/g, "").replace(/\r\n/g, "\n").trim();
+  const description = stripHtml(dbContext).replace(/\r\n/g, "\n");
   const parts = [
     "You are an expert SQL developer. Given the database schema below, write correct SQL queries for each question.",
     ""
@@ -767,8 +657,8 @@ function buildSqlPrompt(questions, dbContext, realSchema) {
   }
   parts.push("", "Questions:");
   for (const q of questions) {
-    const text = q.question.content.replace(/<[^>]+>/g, "").trim();
-    const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim();
+    const text = stripHtml(q.question.content);
+    const starter = stripHtml(q.default_code?.code_content ?? "");
     parts.push(`
 [${q.question_id}]
 ${text}`);
@@ -786,7 +676,7 @@ ${starter}`);
 }
 async function solveSqlQuestions(questions, dbContext, realSchema, onProgress) {
   const answers = /* @__PURE__ */ new Map();
-  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none \u2014 using description context)"}`);
+  debug(`[SQL Solver] Schema: ${realSchema ? realSchema.slice(0, 200) : "(none)"}`);
   const BATCH = 10;
   let done = 0;
   for (let i = 0; i < questions.length; i += BATCH) {
@@ -797,8 +687,9 @@ ${prompt}`);
     let parsed = {};
     let parseFailed = false;
     try {
-      parsed = await withCerebrasModelRotation("SQL", async (model) => {
-        const raw = await createChatCompletion(model, {
+      const raw = await withModelRotation(
+        "SQL",
+        (model) => createChatCompletion(model, {
           messages: [
             {
               role: "system",
@@ -808,21 +699,20 @@ ${prompt}`);
           ],
           maxCompletionTokens: 2048,
           temperature: 0
-        });
-        debug(`[SQL Solver] Raw AI response (${model}):
+        })
+      );
+      debug(`[SQL Solver] Raw AI response:
 ${raw}`);
-        const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-        const cleaned = noThink.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
-        const parsedBatch = JSON.parse(cleaned);
-        debug(`[SQL Solver] Parsed ${Object.keys(parsedBatch).length} answers`);
-        return parsedBatch;
-      });
+      const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      const cleaned = noThink.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+      parsed = JSON.parse(cleaned);
+      debug(`[SQL Solver] Parsed ${Object.keys(parsed).length} answers`);
     } catch {
       parseFailed = true;
     }
     if (Object.keys(parsed).length === 0 && parseFailed) {
       for (const q of batch) {
-        const starter = q.default_code?.code_content?.replace(/<[^>]+>/g, "").trim() ?? "";
+        const starter = stripHtml(q.default_code?.code_content ?? "");
         const fallbackPrompt = `Write a single SQL query for the following task. Respond with ONLY the SQL, no explanation.
 
 ${realSchema ? `Schema:
@@ -831,9 +721,9 @@ ${dbContext}`}
 ${starter ? `Starter SQL:
 ${starter}
 ` : ""}
-Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
+Task: ${stripHtml(q.question.content)}`;
         try {
-          const sql = await withCerebrasModelRotation(
+          const sql = await withModelRotation(
             "SQL fallback",
             (model) => createChatCompletion(model, {
               messages: [{ role: "user", content: fallbackPrompt }],
@@ -859,8 +749,8 @@ Task: ${q.question.content.replace(/<[^>]+>/g, "")}`;
   return answers;
 }
 async function refineSqlAnswer(question, failedSql, errorMessage, realSchema, dbContext) {
-  const schema = realSchema || dbContext.replace(/<[^>]+>/g, "").trim();
-  const questionText = question.question.content.replace(/<[^>]+>/g, "").trim();
+  const schema = realSchema || stripHtml(dbContext);
+  const questionText = stripHtml(question.question.content);
   const prompt = [
     "Your previous SQL query returned the WRONG result. Fix it.",
     "",
@@ -881,7 +771,7 @@ ${errorMessage}`,
   debug(`[SQL Refine] Retry prompt:
 ${prompt}`);
   try {
-    const raw = await withCerebrasModelRotation(
+    const raw = await withModelRotation(
       "SQL refine",
       (model) => createChatCompletion(model, {
         messages: [
@@ -920,7 +810,7 @@ function encodeCodeContent(code) {
   return JSON.stringify(code);
 }
 function buildCodingPrompt(q, lang, template) {
-  const questionText = q.question.content.replace(/<br\s*\/?>\n?/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  const questionText = stripHtml(q.question.content);
   const testCasesText = q.test_cases.map((tc, i) => {
     const inp = decodeCodeContent(tc.input);
     const out = decodeCodeContent(tc.output);
@@ -975,7 +865,7 @@ async function solveCodingQuestion(q, lang) {
   debug(`[Coding] Prompt for "${q.question.short_text}":
 ${prompt}`);
   const systemMessage = lang === "CPP" ? "You are an expert C++ competitive programmer. Your output MUST be ONLY the complete file as given: #include lines + the class with the filled function body. ABSOLUTELY NO int main(). No explanation." : "You are an expert programmer. Write complete, correct, runnable code. Respond with ONLY the code, no markdown, no commentary.";
-  const raw = await withCerebrasModelRotation(
+  const raw = await withModelRotation(
     "coding question",
     (model) => createChatCompletion(model, {
       messages: [
@@ -1626,12 +1516,12 @@ async function loadCurriculum() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   const candidates = [
-    join2(__dirname, "curriculum.json"),
-    join2(__dirname, "..", "curriculum.json")
+    join(__dirname, "curriculum.json"),
+    join(__dirname, "..", "curriculum.json")
   ];
   for (const p of candidates) {
     try {
-      const raw = await readFile2(p, "utf-8");
+      const raw = await readFile(p, "utf-8");
       return JSON.parse(raw);
     } catch {
     }
@@ -1662,8 +1552,8 @@ async function main() {
       }
       throw err;
     }
-    initCerebras(config.cerebrasKey);
-    console.log(chalk5.gray("Initialized Cerebras AI provider.\n"));
+    initAI(config.apiKey || void 0);
+    console.log(chalk5.gray("Initialized AI provider.\n"));
     const client = createClient(config.token);
     try {
       await run(client, config);

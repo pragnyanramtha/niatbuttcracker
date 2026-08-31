@@ -1,200 +1,101 @@
-# AGENTS.md — niatbuttcracker CCBP Course Auto-Completion
+# AGENTS.md — niatbuttcracker
 
-This file documents the automated workflow for completing CCBP courses via the CCBP API. A fresh agent can pick this up and continue.
+Node.js CLI (TypeScript, tsup-bundled) that automates CCBP/NXT course completion using Cerebras AI.
 
-## Context
+## Execution paths
 
-- `niatbuttcracker` is a Node.js CLI that logs into `learning.ccbp.in`, captures a Bearer token, then processes learning sets, practice exams, SQL, and coding question sets.
-- The original app uses Cerebras API for AI-solving. We bypass that and solve everything ourselves (or with agent knowledge).
-- All CCBP API payloads are **double-encoded JSON** (see `scripts/ccbp-lib.js`).
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Interactive: Playwright browser login → semester/course/mode prompts → runs |
+| `npm run exec -- --semester "Semester 2" --token ...` | Non-interactive: CLI flags only, no browser prompt |
+| `npm run build` | `tsup` bundles `src/index.ts` → `dist/index.js`, copies `curriculum.json` into dist |
 
-## Prerequisites
+Non-interactive flags: `--token`, `--api-key`, `--semester`, `--course-ids`, `--course-titles`, `--subjects`, `--mode` (learning_sets/practice/question_sets/all), `--topic-limit`.
 
-- Node.js installed
-- CCBP account credentials (user logs in manually via browser)
-- The project directory at `/home/pik/dev/niatbuttcracker`
+Debug: `DEBUG=1 npm run dev` — shows Axios request/response bodies, SQL prompts, AI raw responses.
 
-## One-Time Setup
+## Auth
 
-### 1. Capture CCBP Token (Browser Login)
+- **Browser-based** via Playwright. Launches Chrome/Edge (non-headless), intercepts `authorization` header from `nkb-backend-ccbp-prod-apis.ccbp.in` requests.
+- Session (cookies) saved to: `%LOCALAPPDATA%\niatbuttcracker\ccbp-session.json` (Win) or `~/.cache/niatbuttcracker/ccbp-session.json` (Unix).
+- Token is **never** saved to disk — captured fresh each interactive run.
+- On HTTP 401, runner clears session and restarts the login flow.
 
-```bash
-CCBP_CREDS="username@email.com:password" node scripts/capture-token.js
-```
+## AI Provider
 
-This launches a Playwright browser (non-headless). The user logs in manually. Once the Bearer token is captured from outgoing API requests, it's saved to `/tmp/ccbp-token.txt`.
+- OpenAI-compatible API at `https://opencode.ai/zen/v1` (model: `big-pickle`).
+- **Free tier — no API key required.** If none provided, uses a default placeholder.
+- Key source (optional): `config.json` (cache dir) → `OPENAI_API_KEY` env var → `--api-key` flag.
+- Model rotation: tries models in order on failure — `north-mini-code-free` → `big-pickle` → `mimo-v2.5-free` → `nemotron-3-ultra-free` → `deepseek-v4-flash-free` → `laguna-s-2.1-free`.
+- `src/solver.ts` uses the `openai` SDK.
 
-Alternative: if a token is already captured, just verify it's still valid:
-```bash
-cat /tmp/ccbp-token.txt
-```
+## CCBP API
 
-### 2. Fetch Course/Topic/Unit Structure
+- Base: `https://nkb-backend-ccbp-prod-apis.ccbp.in`
+- **All POST bodies are double-encoded JSON** (`buildPayload()` in `src/api.ts`):
+  ```
+  { data: JSON.stringify(JSON.stringify(inner)), clientKeyDetailsId: 1 }
+  ```
+- Headers include `x-app-version: 1128`, `x-browser-session-id: crypto.randomUUID()`.
 
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-fetch-courses.js
-```
+## Entrypoints
 
-Saves to `/tmp/ccbp-work/courses.json`, `course-details.json`, `topic-units.json`.
+| File | Role |
+|------|------|
+| `src/index.ts` | Interactive entry — loads curriculum, runs prompts, retries on 401 |
+| `src/agent-exec.ts` | Non-interactive entry — CLI flags, same runner |
+| `src/runner.ts` | Course/topic/unit orchestration |
+| `src/api.ts` | Typed CCBP API wrapper |
+| `src/solver.ts` | All AI calls |
+| `src/solver-interface.ts` | Re-exports from solver.ts (clean imports for runner) |
 
-## Pipeline Order
+## Unit processing order
 
-For each semester, process units in this order:
+Per topic (sequential topics, concurrent units within each group):
 
-```
-1. LEARNING_SET → complete (no AI, just API call)
-2. PRACTICE → fetch MCQs, solve, submit (agent answers)
-3. QUESTION_SET (SQL or Coding) → fetch, solve, submit
-```
+1. **LEARNING_SET** — concurrency 8. No AI. Just calls `completeLearningSet()`.
+2. **PRACTICE** — concurrency 3. Creates exam attempt → fetches MCQs → `solveAll()` via AI → submits → ends attempt.
+3. **QUESTION_SET** — concurrency 2. Probes SQL endpoint first; falls back to coding.
 
-### Step 1: Complete Learning Sets
+## Practice retry
 
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-complete-learning.js
-```
+- Threshold: ≥75% score. Max 3 attempts.
+- Each retry = fresh exam attempt + solve + submit + end.
+- Fallback: if AI can't solve, picks first option.
 
-Marks all `LEARNING_SET` units as complete. 0 AI needed — just calls `completeLearningSet` API.
+## SQL question sets
 
-### Step 2: Practice Exams (MCQs)
+- `fetchDbSchema(dbUrl)` downloads the SQLite DB, introspects tables/columns via `sql.js`.
+- Solves in batches of 10 via AI (JSON output: `{"<question_id>": "SELECT ..."}`).
+- Submits one at a time. On INCORRECT, feeds server error back to AI via `refineSqlAnswer()` — up to 5 AI retries.
+- Network errors (5xx): auto-retry up to 3 times with exponential backoff (1s, 2s, 4s).
+- Post-check: re-fetches status, resubmits any still not correct using cached SQL.
 
-**Fetch:**
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-fetch-practice.js
-```
-Creates exam attempts and saves questions to `/tmp/ccbp-work/practice-questions.json`.
+## Coding question sets
 
-**Answer Format:**
+- Language preference: PYTHON > NODE_JS > CPP > JAVA > first available.
+- **Must call `startCodingQuestion()` before submitting** — server rejects without it.
+- Solution cleanup: strips `<think>...</think>` blocks and markdown fences.
+- On AI failure: falls back to default template.
+- Post-check: re-fetches summary, resubmits still-incorrect with one extra AI attempt.
 
-Answer file at `/tmp/ccbp-work/practice-answers.json`:
-```json
-{
-  "answers": {
-    "<question_id>": "<option_id>",
-    ...
-  }
-}
-```
+## Curriculum
 
-**How to Answer:**
+- `curriculum.json` is local (bundled, not fetched from CCBP). Drives semester/course prompts.
+- Lookup order: `dist/curriculum.json` → `../curriculum.json` (relative to entrypoint).
 
-1. View all questions grouped by course:
-   ```bash
-   node /tmp/ccbp-work/dump-course.mjs "Course Name"
-   ```
+## Config & cache
 
-2. Each question has format:
-   ```
-   <question_id>|Q<number>|<question text>
-   <question_id>|O<option_number>|<option_id>|<option text>
-   ```
+- Cache dir: `%LOCALAPPDATA%\niatbuttcracker` (Win) / `~/.cache/niatbuttcracker` (Unix)
+- `config.json` — stores optional API key
+- `ccbp-session.json` — Playwright browser storage state
 
-3. For each question, pick the correct option's `option_id` and add to `practice-answers.json`.
+## Scripts (standalone, not used by main app)
 
-4. Use a Node.js one-liner to batch-add answers:
-   ```bash
-   node -e "
-   const fs = require('fs');
-   const a = JSON.parse(fs.readFileSync('/tmp/ccbp-work/practice-answers.json','utf-8'));
-   Object.assign(a.answers, { '<question_id>': '<option_id>' });
-   fs.writeFileSync('/tmp/ccbp-work/practice-answers.json', JSON.stringify(a, null, 2));
-   "
-   ```
+`scripts/*.js` — legacy alternative workflow using `/tmp/ccbp-work/` and `/tmp/ccbp-token.txt`. Not part of the `src/` TypeScript app. Ignore unless specifically referenced.
 
-**Submit:**
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-submit-practice.js
-```
+## Known quirks
 
-The submit script:
-- Submits all answers via CCBP API
-- Checks score (try for ≥75%)
-- Retries up to 3 times if score is below threshold
-- Ends each exam attempt
-
-### Step 3: SQL Question Sets
-
-**Fetch:**
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-fetch-sql.js
-```
-
-Saves to `/tmp/ccbp-work/sql-questions.json`.
-
-**SQL Solving:**
-
-1. Each SQL question has: question text, DB schema (tables + columns), `db_url` (SQLite database)
-2. Answer file at `/tmp/ccbp-work/sql-answers.json`:
-   ```json
-   {
-     "answers": {
-       "<question_id>": "SELECT ...",
-       ...
-     }
-   }
-   ```
-3. **Submit:**
-   ```bash
-   CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-submit-sql.js
-   ```
-
-### Step 4: Coding Question Sets
-
-**Fetch:**
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-fetch-coding.js
-```
-
-**Coding Solving:**
-
-1. Questions shown with: problem statement, examples, starter template, applicable languages
-2. Pick language preference: PYTHON > NODE_JS > CPP > JAVA
-3. Answer file at `/tmp/ccbp-work/coding-answers.json`:
-   ```json
-   {
-     "answers": {
-       "<question_id>": "def solution():\n    ...",
-       ...
-     }
-   }
-   ```
-4. **Submit:**
-   ```bash
-   CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-submit-coding.js
-   ```
-
-### Run Everything (Orchestrator)
-
-```bash
-CCBP_TOKEN="$(cat /tmp/ccbp-token.txt)" node scripts/ccbp-run.js
-```
-
-This runs the full pipeline: learning → practice → sql → coding.
-
-## Data Files
-
-All in `/tmp/ccbp-work/`:
-| File | Contents |
-|------|----------|
-| `courses.json` | Course list |
-| `course-details.json` | Detailed course info |
-| `topic-units.json` | Units per topic |
-| `practice-questions.json` | Fetched MCQs |
-| `practice-answers.json` | MCQ answers (key=question_id, value=option_id) |
-| `sql-questions.json` | Fetched SQL questions |
-| `sql-answers.json` | SQL query answers |
-| `coding-questions.json` | Fetched coding problems |
-| `coding-answers.json` | Coding solution answers |
-| `dump-course.mjs` | Helper to dump questions for a specific course |
-
-## Token & Config
-
-- Token stored at: `/tmp/ccbp-token.txt`
-- Config file: `~/.cache/niatbuttcracker/config.json` (for Cerebras key — not needed anymore)
-
-## Important Notes
-
-- All POST bodies use double-encoded JSON wrapper via `buildPayload()` in `scripts/ccbp-lib.js`
-- Practice retries: max 3 attempts, aim for ≥75% score
-- Learning sets: no AI needed, just mark complete
-- Token expires eventually — re-run `capture-token.js` when 401 errors occur
-- The submit script processes ALL practice sets even if no answers given (falls back to first option). To skip unanswered sets, modify the script.
+- No test framework in dependencies — no test runner to invoke.
+- `.agent/` directory is Antigravity Kit (unrelated to CCBP app).
+- `dp` and `sem2.json` are local data files.

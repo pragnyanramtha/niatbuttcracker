@@ -55,43 +55,10 @@ async function captureAuthToken(): Promise<string> {
   }
 }
 
-// ── Cerebras API key instructions & collection ───────────────────────────────
-
-async function getCerebrasKey(): Promise<string> {
+async function getApiKey(): Promise<string | undefined> {
+  const { loadConfig } = await import("./config.js");
   const cfg = await loadConfig();
-  const envKey = process.env.CEREBRAS_API_KEY?.trim();
-
-  if (cfg.cerebrasKey?.trim()) {
-    const cerebrasKey = cfg.cerebrasKey.trim();
-    await saveConfig({ cerebrasKey });
-    console.log(chalk.gray("Loaded Cerebras API key from config.\n"));
-    return cerebrasKey;
-  }
-
-  if (envKey) {
-    console.log(chalk.gray("Loaded Cerebras API key from CEREBRAS_API_KEY.\n"));
-    return envKey;
-  }
-
-  console.log(chalk.bold.yellow("── Cerebras API Key Setup ──────────────────────\n"));
-  console.log(chalk.gray("  You'll need to get an API key from Cerebras Cloud.\n"));
-  console.log(chalk.bold("  Steps to get your API key:"));
-  console.log(chalk.gray("    1. Ctrl+Click this link to open in your browser:"));
-  console.log(chalk.cyan("       https://cloud.cerebras.ai/\n"));
-  console.log(chalk.gray("    2. Sign in or create a Cerebras account"));
-  console.log(chalk.gray("    3. Click 'Create API Key'"));
-  console.log(chalk.gray("    4. Copy the API key"));
-  console.log(chalk.gray("    5. Paste it below\n"));
-
-  const cerebrasKey = (await password({
-    message: "Paste your Cerebras API key:",
-    mask: "•",
-    validate: (v) => (v.trim().length > 0 ? true : "Cerebras API key is required"),
-  })).trim();
-
-  await saveConfig({ cerebrasKey });
-  console.log(chalk.green("Cerebras API key saved.\n"));
-  return cerebrasKey;
+  return cfg.apiKey?.trim() || process.env.OPENAI_API_KEY?.trim() || undefined;
 }
 
 // ── Semester / course selection ───────────────────────────────────────────────
@@ -202,7 +169,7 @@ async function selectMode(): Promise<CompletionMode> {
 
 // ── Summary & confirm ─────────────────────────────────────────────────────────
 
-function printSummary(config: Omit<RunConfig, "token" | "cerebrasKey">): void {
+function printSummary(config: Omit<RunConfig, "token" | "apiKey">): void {
   console.log(chalk.bold.yellow("\n── Run Summary ──────────────────────────────────\n"));
 
   for (const course of config.selectedCourses) {
@@ -229,7 +196,7 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
   // Auto-capture auth token from browser (no prompts)
   const token = await captureAuthToken();
 
-  const cerebrasKey = await getCerebrasKey();
+  const apiKey = await getApiKey();
 
   const semester = await selectSemester(curriculum);
   const courses = await selectCourses(semester);
@@ -252,7 +219,7 @@ export async function runPrompts(curriculum: Curriculum): Promise<RunConfig> {
 
   const config: RunConfig = {
     token,
-    cerebrasKey,
+    apiKey,
     selectedCourses,
     mode,
     skipCompleted,
