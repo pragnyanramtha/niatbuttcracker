@@ -75,10 +75,16 @@ async function withModelRotation<T>(
     if (attempted.has(model)) continue;
     attempted.add(model);
 
+    const start = Date.now();
     try {
-      return await operation(model);
+      const result = await operation(model);
+      debug(`[solver] ${label} OK model="${model}" ${Date.now() - start}ms`);
+      return result;
     } catch (err) {
-      console.warn(`[solver] ${label} model "${model}" failed — trying next...`);
+      const elapsed = Date.now() - start;
+      console.warn(
+        `[solver] ${label} model "${model}" FAILED after ${elapsed}ms — trying next...`,
+      );
       lastError = err;
     }
   }

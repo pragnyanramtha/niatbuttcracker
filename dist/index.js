@@ -16,6 +16,7 @@ import ora from "ora";
 
 // src/browser-auth.ts
 import chalk from "chalk";
+import { execSync } from "child_process";
 import { existsSync, unlinkSync } from "fs";
 import { chromium } from "playwright";
 async function getAvailableBrowserChannel() {
@@ -27,17 +28,48 @@ async function getAvailableBrowserChannel() {
         channel
       });
       await browser.close();
-      return channel;
+      return { channel };
+    } catch {
+    }
+  }
+  const systemNames = [
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "brave-browser"
+  ];
+  for (const name of systemNames) {
+    const executablePath = resolveExecutable(name);
+    if (!executablePath) continue;
+    try {
+      const browser = await chromium.launch({
+        headless: true,
+        executablePath
+      });
+      await browser.close();
+      return { executablePath };
     } catch {
     }
   }
   try {
     const browser = await chromium.launch({ headless: true });
     await browser.close();
-    return "default";
+    return { channel: "default" };
   } catch {
   }
   return null;
+}
+function resolveExecutable(name) {
+  const cmd = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
+  try {
+    const out = execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out.split("\n")[0] || null;
+  } catch {
+    return null;
+  }
 }
 function hasSavedSession() {
   return existsSync(getSessionPath());
@@ -60,14 +92,15 @@ async function captureTokenFromBrowser(options = {}) {
   let browser = null;
   let capturedToken = null;
   try {
-    const channel = await getAvailableBrowserChannel();
-    if (!channel) {
+    const found = await getAvailableBrowserChannel();
+    if (!found) {
       return {
         success: false,
-        error: "No browser found. Install Chrome or Edge."
+        error: "No browser found. Install Chrome, Edge, or Chromium."
       };
     }
-    const browserName = channel === "default" ? "chromium" : channel;
+    const { channel, executablePath } = found;
+    const browserName = channel === "default" ? "chromium" : executablePath ? executablePath.split("/").pop() : channel;
     console.log(chalk.gray(`  Using ${browserName}...`));
     const hasSession = !forceLogin && hasSavedSession();
     if (hasSession) {
@@ -77,8 +110,11 @@ async function captureTokenFromBrowser(options = {}) {
       headless: false,
       args: ["--start-maximized"]
     };
-    if (channel !== "default") {
+    if (channel && channel !== "default") {
       launchOptions.channel = channel;
+    }
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
     }
     browser = await chromium.launch(launchOptions);
     const context = await browser.newContext({
@@ -456,12 +492,12 @@ function debugAxiosError(context, err) {
 // src/solver.ts
 var API_BASE_URL = "https://opencode.ai/zen/v1";
 var MODELS = [
-  "north-mini-code-free",
   "big-pickle",
-  "mimo-v2.5-free",
   "nemotron-3-ultra-free",
+  "mimo-v2.5-free",
   "deepseek-v4-flash-free",
-  "laguna-s-2.1-free"
+  "laguna-s-2.1-free",
+  "north-mini-code-free"
 ];
 var openaiClient = null;
 function initAI(apiKey) {
@@ -533,18 +569,36 @@ ${code}
     letterToId.set(letter, opt.option_id);
   }
   parts.push(
-    "\nAnalyze the question carefully and think step by step.",
-    "Then end your response with exactly this line:",
-    "Answer: X",
-    "where X is the single letter of the correct option (A, B, C, D, \u2026)."
+    "",
+    "Instructions:",
+    "1. Read the question and ALL options carefully.",
+    "2. For each option, briefly state whether it is correct or incorrect and why.",
+    "3. If this is a code question, trace through the code step by step.",
+    "4. After evaluating all options, state your final answer.",
+    "5. End your response with EXACTLY this line (nothing else after it):",
+    "   Answer: <letter>"
   );
   return { prompt: parts.join("\n"), letterToId };
 }
 function pickBestOptionId(responseText, options, letterToId) {
   const cleaned = responseText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  const answerLineMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
-  if (answerLineMatch) {
-    const letter = answerLineMatch[1].toUpperCase();
+  const lastLineMatch = cleaned.match(/answer[:\s]+([A-H])\s*$/im);
+  if (lastLineMatch) {
+    const letter = lastLineMatch[1].toUpperCase();
+    const id = letterToId.get(letter);
+    if (id) return id;
+  }
+  const anywhereMatch = cleaned.match(/answer[:\s]+([A-H])\b/i);
+  if (anywhereMatch) {
+    const letter = anywhereMatch[1].toUpperCase();
+    const id = letterToId.get(letter);
+    if (id) return id;
+  }
+  const phraseMatch = cleaned.match(
+    /(?:the\s+)?(?:correct\s+)?answer\s+is\s+([A-H])\b/i
+  );
+  if (phraseMatch) {
+    const letter = phraseMatch[1].toUpperCase();
     const id = letterToId.get(letter);
     if (id) return id;
   }
@@ -586,7 +640,7 @@ async function solveQuestion(question) {
       messages: [
         {
           role: "system",
-          content: "You are an expert tutor and problem-solver with deep knowledge across computer science, mathematics, science, languages, and general academia. When given a multiple-choice question, reason through it carefully before answering. Always end your response with 'Answer: X' where X is the letter of the correct option."
+          content: "You are an expert academic tutor. You will be given a multiple-choice question with options labeled A, B, C, D, etc.\n\nRULES:\n- Carefully analyze EACH option before choosing.\n- For code/tracing questions, trace through the code line by line with concrete values.\n- For theory questions, use your domain knowledge to eliminate wrong answers.\n- Do NOT guess. If unsure, reason through each option by elimination.\n- Your LAST line must be exactly: Answer: X (where X is the letter A-D).\n- Nothing may appear after the Answer: line."
         },
         { role: "user", content: prompt }
       ],
@@ -594,6 +648,8 @@ async function solveQuestion(question) {
       temperature: 0
     })
   );
+  debug(`[MCQ] AI raw response:
+${raw}`);
   return pickBestOptionId(raw, question.options, letterToId);
 }
 async function solveAll(questions, onProgress) {
@@ -612,9 +668,6 @@ async function solveAll(questions, onProgress) {
       answers.set(q.question_id, q.options[0]?.option_id ?? "");
     }
     onProgress?.(i + 1, questions.length);
-    if (i < questions.length - 1) {
-      await new Promise((r) => setTimeout(r, 300));
-    }
   }
   return answers;
 }
@@ -1432,8 +1485,9 @@ async function processTopic(client, topic, courseId, config) {
     units = res.units_details;
     unitSpinner.succeed(`  ${units.length} unit(s) found`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    unitSpinner.fail(`  Could not load units: ${msg}`);
+    const status = err?.response?.status;
+    unitSpinner.fail(`  Could not load units: ${err instanceof Error ? err.message : String(err)}`);
+    if (status === 401) throw err;
     return;
   }
   await sleep(config.delayMs);
@@ -1474,8 +1528,9 @@ async function processCourse(client, config, courseId, courseTitle, topicLimit) 
       `${courseDetails.topics.length} topics loaded  (${courseDetails.completion_percentage.toFixed(1)}% complete)`
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    courseSpinner.fail(`Failed to load course: ${msg}`);
+    const status = err?.response?.status;
+    courseSpinner.fail(`Failed to load course: ${err instanceof Error ? err.message : String(err)}`);
+    if (status === 401) throw err;
     return;
   }
   await sleep(config.delayMs);

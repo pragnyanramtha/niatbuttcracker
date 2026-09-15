@@ -1,10 +1,11 @@
 /**
  * Browser-based automatic auth token capture.
- * Uses Chrome (preferred) or Edge — no browser download required.
+ * Uses Chrome (preferred), Edge, or system Chromium — no browser download required.
  * Persists browser session (cookies) so you only login once.
  */
 
 import chalk from "chalk";
+import { execSync } from "child_process";
 import { existsSync, unlinkSync } from "fs";
 import { chromium } from "playwright";
 import { getSessionPath } from "./config.js";
@@ -28,10 +29,10 @@ export interface BrowserAuthResult {
 
 /**
  * Find the best available browser.
- * Priority: chrome → msedge → default chromium
+ * Priority: chrome → msedge → system chromium/chrome/edge executable → bundled chromium.
  */
-async function getAvailableBrowserChannel(): Promise<string | null> {
-  // Try Chrome FIRST (user preference), then Edge
+async function getAvailableBrowserChannel(): Promise<{ channel?: string; executablePath?: string } | null> {
+  // Try Playwright channels FIRST (Chrome, then Edge)
   const channels = ["chrome", "msedge"];
 
   for (const channel of channels) {
@@ -41,22 +42,62 @@ async function getAvailableBrowserChannel(): Promise<string | null> {
         channel,
       });
       await browser.close();
-      return channel;
+      return { channel };
     } catch {
       // This channel not available, try next
     }
   }
 
-  // Fallback: try default chromium
+  // Next, probe system-installed chromium/chrome/edge executables (e.g. apt/snap chromium on Linux)
+  const systemNames = [
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "brave-browser",
+  ];
+
+  for (const name of systemNames) {
+    const executablePath = resolveExecutable(name);
+    if (!executablePath) continue;
+
+    try {
+      const browser = await chromium.launch({
+        headless: true,
+        executablePath,
+      });
+      await browser.close();
+      return { executablePath };
+    } catch {
+      // Found binary but Playwright couldn't launch it, try next
+    }
+  }
+
+  // Fallback: try Playwright-bundled chromium (needs: npx playwright install chromium)
   try {
     const browser = await chromium.launch({ headless: true });
     await browser.close();
-    return "default";
+    return { channel: "default" };
   } catch {
     // No browser available
   }
 
   return null;
+}
+
+/**
+ * Resolve a browser executable name to a full path via PATH lookup.
+ */
+function resolveExecutable(name: string): string | null {
+  const cmd = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
+  try {
+    const out = execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out.split("\n")[0] || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -96,15 +137,16 @@ export async function captureTokenFromBrowser(
 
   try {
     // Find available browser
-    const channel = await getAvailableBrowserChannel();
-    if (!channel) {
+    const found = await getAvailableBrowserChannel();
+    if (!found) {
       return {
         success: false,
-        error: "No browser found. Install Chrome or Edge.",
+        error: "No browser found. Install Chrome, Edge, or Chromium.",
       };
     }
 
-    const browserName = channel === "default" ? "chromium" : channel;
+    const { channel, executablePath } = found;
+    const browserName = channel === "default" ? "chromium" : executablePath ? executablePath.split("/").pop() : channel;
     console.log(chalk.gray(`  Using ${browserName}...`));
 
     // Check for saved session
@@ -113,13 +155,16 @@ export async function captureTokenFromBrowser(
       console.log(chalk.gray("  Restoring saved session..."));
     }
 
-    // Launch browser (use channel only if not default)
-    const launchOptions: { headless: boolean; channel?: string; args: string[] } = {
+    // Launch browser (channel only when a Playwright channel was found)
+    const launchOptions: { headless: boolean; channel?: string; executablePath?: string; args: string[] } = {
       headless: false,
       args: ["--start-maximized"],
     };
-    if (channel !== "default") {
+    if (channel && channel !== "default") {
       launchOptions.channel = channel;
+    }
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
     }
 
     browser = await chromium.launch(launchOptions);
