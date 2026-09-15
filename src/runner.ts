@@ -452,11 +452,13 @@ async function handleQuestionSet(
   } catch (err: unknown) {
     const status = (err as any)?.response?.status;
     const msg = err instanceof Error ? err.message : String(err);
-    // 4xx means this unit is not a coding question set — skip silently
-    if (status && status < 500) {
+    // 404 = this unit is not a coding question set — skip silently
+    if (status === 404) {
       summarySpinner.succeed("  Not a coding question set — skipping");
       return;
     }
+    // 401 = session expired — bubble up to the entry-point retry/re-login loop
+    if (status === 401) throw err;
     summarySpinner.fail(`  Failed to fetch question list: ${msg}`);
     return;
   }

@@ -54,21 +54,32 @@ async function createChatCompletion(
 
   const TIMEOUT_MS = 45000;
 
-  const completion = await Promise.race([
-    openaiClient.chat.completions.create({
-      model,
-      messages: request.messages,
-      max_completion_tokens: request.maxCompletionTokens,
-      temperature: request.temperature ?? 0,
-      top_p: request.topP ?? 1,
-      stream: false,
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Request timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
-    ),
-  ]);
+  // AbortController actually cancels the underlying request on timeout;
+  // a bare Promise.race would leave it running and risk an unhandled rejection.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-  return completion.choices?.[0]?.message?.content?.trim() ?? "";
+  try {
+    const completion = await openaiClient.chat.completions.create(
+      {
+        model,
+        messages: request.messages,
+        max_completion_tokens: request.maxCompletionTokens,
+        temperature: request.temperature ?? 0,
+        top_p: request.topP ?? 1,
+        stream: false,
+      },
+      { signal: controller.signal },
+    );
+    return completion.choices?.[0]?.message?.content?.trim() ?? "";
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function withModelRotation<T>(

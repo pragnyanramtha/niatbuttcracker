@@ -493,10 +493,10 @@ function debugAxiosError(context, err) {
 var API_BASE_URL = "https://opencode.ai/zen/v1";
 var MODELS = [
   "big-pickle",
-  "nemotron-3-ultra-free",
-  "mimo-v2.5-free",
   "deepseek-v4-flash-free",
+  "mimo-v2.5-free",
   "laguna-s-2.1-free",
+  "nemotron-3-ultra-free",
   "north-mini-code-free"
 ];
 var openaiClient = null;
@@ -515,15 +515,30 @@ async function createChatCompletion(model, request) {
   if (!openaiClient) {
     throw new Error("AI not initialised. Call initAI() first.");
   }
-  const completion = await openaiClient.chat.completions.create({
-    model,
-    messages: request.messages,
-    max_completion_tokens: request.maxCompletionTokens,
-    temperature: request.temperature ?? 0,
-    top_p: request.topP ?? 1,
-    stream: false
-  });
-  return completion.choices?.[0]?.message?.content?.trim() ?? "";
+  const TIMEOUT_MS = 45e3;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const completion = await openaiClient.chat.completions.create(
+      {
+        model,
+        messages: request.messages,
+        max_completion_tokens: request.maxCompletionTokens,
+        temperature: request.temperature ?? 0,
+        top_p: request.topP ?? 1,
+        stream: false
+      },
+      { signal: controller.signal }
+    );
+    return completion.choices?.[0]?.message?.content?.trim() ?? "";
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 async function withModelRotation(label, operation) {
   const attempted = /* @__PURE__ */ new Set();
@@ -531,10 +546,16 @@ async function withModelRotation(label, operation) {
   for (const model of MODELS) {
     if (attempted.has(model)) continue;
     attempted.add(model);
+    const start = Date.now();
     try {
-      return await operation(model);
+      const result = await operation(model);
+      debug(`[solver] ${label} OK model="${model}" ${Date.now() - start}ms`);
+      return result;
     } catch (err) {
-      console.warn(`[solver] ${label} model "${model}" failed \u2014 trying next...`);
+      const elapsed = Date.now() - start;
+      console.warn(
+        `[solver] ${label} model "${model}" FAILED after ${elapsed}ms \u2014 trying next...`
+      );
       lastError = err;
     }
   }
@@ -1139,12 +1160,8 @@ async function handlePracticeSet(client, unit, skipCompleted, delayMs) {
     return;
   }
 }
-async function handleQuestionSet(client, unit, skipCompleted, delayMs) {
+async function handleQuestionSet(client, unit, delayMs) {
   const name = unit.question_set_unit_details?.name ?? unit.learning_resource_set_unit_details?.name ?? unit.unit_id;
-  if (skipCompleted && unit.completion_percentage >= 100) {
-    log("skip", `Question Set: ${chalk4.dim(name)} ${chalk4.gray("(already done)")}`);
-    return;
-  }
   if (unit.is_unit_locked) {
     log("warn", `Question Set: ${chalk4.dim(name)} ${chalk4.yellow("(locked \u2014 skipping)")}`);
     return;
@@ -1310,7 +1327,13 @@ ${errorDetail}`);
     summary = await getCodingQuestionsSummary(client, unit.unit_id);
     summarySpinner.succeed(`  ${summary.length} coding question(s) found`);
   } catch (err) {
+    const status = err?.response?.status;
     const msg = err instanceof Error ? err.message : String(err);
+    if (status === 404) {
+      summarySpinner.succeed("  Not a coding question set \u2014 skipping");
+      return;
+    }
+    if (status === 401) throw err;
     summarySpinner.fail(`  Failed to fetch question list: ${msg}`);
     return;
   }
@@ -1512,7 +1535,7 @@ async function processTopic(client, topic, courseId, config) {
     const limiter = new ConcurrencyLimiter(2);
     await limiter.runAll(
       questionUnits.map(
-        (unit) => () => handleQuestionSet(client, unit, config.skipCompleted, config.delayMs)
+        (unit) => () => handleQuestionSet(client, unit, config.delayMs)
       )
     );
   }
